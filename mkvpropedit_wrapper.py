@@ -1,5 +1,5 @@
 """
-Isolated mkvpropedit interface for audio-track name metadata edits.
+Isolated mkvpropedit interface for track name metadata edits.
 """
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
@@ -12,15 +12,14 @@ import subprocess  # Run mkvpropedit safely with argument lists.
 
 
 @dataclass(frozen=True)
-class AudioTrackRename:
+class TrackNameEdit:
     """
-    Stores one intended audio-track rename operation.
+    Stores one intended track-name edit operation.
     """
 
-    audio_position: int  # Store zero-based audio stream position.
+    track_selector: str  # Store mkvpropedit track selector.
     current_name: str  # Store current track name before editing.
     new_name: str  # Store target track name.
-    track_uid: int | None = None  # Store Matroska track UID when available.
 
 
 @dataclass(frozen=True)
@@ -75,23 +74,54 @@ def valid_target_name(value: str) -> str:
     return value.strip()  # Return stripped metadata name.
 
 
-def build_mkvpropedit_arguments(file_path: Path, renames: list[AudioTrackRename], executable: str = "mkvpropedit") -> list[str]:
+def build_track_selector(track_type: str, track_position: int, track_uid: int | None) -> str:
     """
-    Build a safe mkvpropedit argument list for audio-track names only.
+    Build a mkvpropedit selector for one target track.
+
+    :param track_type: MKVToolNix selector type letter.
+    :param track_position: Zero-based type-specific track position.
+    :param track_uid: Matroska track UID when available.
+    :return: mkvpropedit track selector.
+    """
+
+    if track_uid is not None:  # Verify whether a stable Matroska Track UID is available.
+        return f"track:={track_uid}"  # Return UID selector.
+    return f"track:{track_type}{track_position + 1}"  # Return type ordinal selector.
+
+
+def valid_track_selector(track_selector: str) -> bool:
+    """
+    Verify whether a track selector is limited to supported target tracks.
+
+    :param track_selector: mkvpropedit track selector.
+    :return: True when selector is supported.
+    """
+
+    if track_selector.startswith("track:="):  # Verify UID selector prefix.
+        return track_selector[7:].isdigit()  # Return UID numeric validation.
+    if track_selector.startswith("track:a"):  # Verify audio ordinal selector prefix.
+        return track_selector[7:].isdigit()  # Return audio ordinal numeric validation.
+    if track_selector.startswith("track:v"):  # Verify video ordinal selector prefix.
+        return track_selector[7:].isdigit()  # Return video ordinal numeric validation.
+    return False  # Return unsupported selector result.
+
+
+def build_mkvpropedit_arguments(file_path: Path, edits: list[TrackNameEdit], executable: str = "mkvpropedit") -> list[str]:
+    """
+    Build a safe mkvpropedit argument list for track names only.
 
     :param file_path: Matroska file path.
-    :param renames: Track rename operations.
+    :param edits: Track name edit operations.
     :param executable: mkvpropedit executable path or command name.
     :return: mkvpropedit command arguments.
     """
 
     command = [executable, str(file_path)]  # Start mkvpropedit command.
-    for rename in renames:  # Iterate requested renames.
-        target_name = valid_target_name(rename.new_name)  # Normalize target name.
-        if rename.audio_position < 0 or target_name == "" or target_name == rename.current_name:  # Verify this operation should be skipped.
+    for edit in edits:  # Iterate requested edits.
+        target_name = valid_target_name(edit.new_name)  # Normalize target name.
+        if not valid_track_selector(edit.track_selector) or target_name == "" or target_name == edit.current_name:  # Verify this operation should be skipped.
             continue  # Skip invalid or unnecessary operation.
-        track_selector = f"track:={rename.track_uid}" if rename.track_uid is not None else f"track:a{rename.audio_position + 1}"  # Prefer Matroska track UID selector when available.
-        command.extend(["--edit", track_selector, "--set", f"name={target_name}"])  # Add name-only track edit.
+        command.extend(["--edit", edit.track_selector, "--set", f"name={target_name}"])  # Add name-only track edit.
     return command  # Return complete argument list.
 
 
@@ -113,11 +143,7 @@ def command_sets_only_track_names(command: list[str]) -> bool:
         if command[index] != "--edit":  # Verify edit flag.
             return False  # Return invalid command result.
         track_selector = command[index + 1]  # Read track selector.
-        if track_selector.startswith("track:a") and not track_selector[7:].isdigit():  # Verify audio ordinal selector.
-            return False  # Return invalid command result.
-        if track_selector.startswith("track:=") and not track_selector[7:].isdigit():  # Verify Track UID selector.
-            return False  # Return invalid command result.
-        if not (track_selector.startswith("track:a") or track_selector.startswith("track:=")):  # Verify track selector prefix.
+        if not valid_track_selector(track_selector):  # Verify supported track selector.
             return False  # Return invalid command result.
         if command[index + 2] != "--set":  # Verify property setter flag.
             return False  # Return invalid command result.
@@ -128,12 +154,12 @@ def command_sets_only_track_names(command: list[str]) -> bool:
     return True  # Return valid name-only command result.
 
 
-def apply_audio_track_renames(file_path: Path, renames: list[AudioTrackRename]) -> MkvpropeditResult:
+def apply_track_name_edits(file_path: Path, edits: list[TrackNameEdit]) -> MkvpropeditResult:
     """
-    Apply audio-track name edits through mkvpropedit.
+    Apply track-name edits through mkvpropedit.
 
     :param file_path: Matroska file path.
-    :param renames: Track rename operations.
+    :param edits: Track name edit operations.
     :return: mkvpropedit execution result.
     """
 
@@ -141,7 +167,7 @@ def apply_audio_track_renames(file_path: Path, renames: list[AudioTrackRename]) 
     if executable is None:  # Verify mkvpropedit is available.
         return MkvpropeditResult(file_path, ["mkvpropedit", str(file_path)], 127, "", "mkvpropedit not found", 0, False, False)  # Return missing-tool failure.
 
-    command = build_mkvpropedit_arguments(file_path, renames, executable)  # Build safe argument list.
+    command = build_mkvpropedit_arguments(file_path, edits, executable)  # Build safe argument list.
     changed_count = (len(command) - 2) // 4 if len(command) > 2 else 0  # Count edit groups.
     if changed_count == 0:  # Verify any actual edit remains.
         return MkvpropeditResult(file_path, command, 0, "", "no track-name edits needed", 0, True, False)  # Return no-op success.
