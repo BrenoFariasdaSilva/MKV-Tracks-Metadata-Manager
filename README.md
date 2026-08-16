@@ -8,7 +8,7 @@
   
 ---
 
-Metadata-only Matroska track metadata renamer that generates human-editable audio and embedded-subtitle reports, sets the video track name from the filename, sets the selected default audio language to English unless configured otherwise, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
+Metadata-only Matroska track metadata renamer that generates human-editable audio and embedded-subtitle reports, sets the video track name from the filename, optionally sets a selected default audio language, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
 
 ---
 
@@ -84,7 +84,7 @@ The reviewed-report workflow is:
 3. Review and edit `desired_new_name` values.
 4. Execute renaming.
 
-The integrated workflow generates the selected reports and then renames selected track names in one command.
+The integrated Makefile workflow generates the selected reports and then renames selected track names in one command.
 
 ## Installation:
 
@@ -126,14 +126,19 @@ The macOS installer requires Homebrew and installs `ffmpeg` and the `mkvtoolnix`
 
 All Makefile Python targets use the project `venv` automatically. Do not activate the virtual environment manually.
 
-Forward CLI options with `ARGS="..."`:
+Forward CLI options to individual `report` and `rename` targets with `ARGS="..."`:
 
 ```bash
 make help
 make report ARGS="--audio"
 make rename ARGS="--video --audio"
-make process ARGS="--video --audio --subtitles"
-make process ARGS="--video --audio --no-set-default-audio"
+```
+
+Forward separate CLI options to the integrated `process` target with `REPORT_ARGS="..."` and `RENAME_ARGS="..."`:
+
+```bash
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio"
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles"
 ```
 
 Supported processing flags:
@@ -165,13 +170,13 @@ Makefile path variables:
 PowerShell path with spaces through Make:
 
 ```powershell
-make process ARGS="--video --audio" INPUT_DIR="E:/Movies/Test Folder"
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio" INPUT_DIR="E:/Movies/Test Folder"
 ```
 
 Single-file processing:
 
 ```powershell
-make process ARGS="--video --audio" FILE="Dual/300 2006 1080p Dual/300 2006 1080p Dual.mkv"
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio" FILE="Dual/300 2006 1080p Dual/300 2006 1080p Dual.mkv"
 ```
 
 The `--file` value must name one exact supported MKV under `--input-dir`. No fuzzy matching is used.
@@ -291,7 +296,7 @@ mkvpropedit FILE --edit track:sN --set name=NEW_NAME
 
 ### Default audio selection
 
-Default-audio selection means setting the Matroska audio-track `flag-default` metadata. It is enabled by default whenever `--audio` is selected.
+Default-audio selection means setting the Matroska audio-track `flag-default` metadata. It is disabled by default and only runs when `--set-default-audio` is supplied.
 
 Preferred default audio language defaults to:
 
@@ -299,36 +304,36 @@ Preferred default audio language defaults to:
 English
 ```
 
-The actual Matroska `language` field is not changed.
+The actual Matroska `language` field is not changed. Supplying `--default-audio-language` without `--set-default-audio` does not change default flags.
 
-Video/audio processing with English default audio:
+Video/audio processing without default-audio changes:
 
 ```powershell
-make process ARGS="--video --audio"
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio"
 ```
 
-Equivalent explicit English:
+English default:
 
 ```powershell
-make process ARGS="--video --audio --set-default-audio"
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --set-default-audio"
 ```
 
 Explicit English with language option:
 
 ```powershell
-make process ARGS="--video --audio --set-default-audio --default-audio-language English"
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --set-default-audio --default-audio-language English"
 ```
 
 Portuguese:
 
 ```powershell
-make process ARGS="--video --audio --default-audio-language Portuguese"
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --set-default-audio --default-audio-language Portuguese"
 ```
 
 Disable default-audio changes:
 
 ```powershell
-make process ARGS="--video --audio --no-set-default-audio"
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --no-set-default-audio"
 ```
 
 If exactly one audio track resolves to the requested language, that track becomes default and every other audio track is set to `flag-default=0`. If no requested-language audio track exists, existing default audio flags are left unchanged. If multiple requested-language audio tracks exist, existing default audio flags are left unchanged instead of guessing. If the requested-language track is already the only default audio track, no default-flag edit is generated.
@@ -338,47 +343,47 @@ If exactly one audio track resolves to the requested language, that track become
 Video and audio only:
 
 ```powershell
-make process ARGS="--video --audio"
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio"
 ```
 
 Everything:
 
 ```powershell
-make process ARGS="--video --audio --subtitles"
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles"
 ```
 
 Everything with English audio default:
 
 ```powershell
-make process ARGS="--video --audio --subtitles --default-audio-language English"
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English"
 ```
 
-This runs `auto_track_metadata_renamer.py`, generates the selected audio and/or subtitle reports, recursively discovers supported Matroska files under `INPUT_DIR`, sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies selected video/audio/subtitle `name=` edits plus optional audio `flag-default=` edits for each MKV in one `mkvpropedit` invocation.
+This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies selected video/audio/subtitle `name=` edits plus optional audio `flag-default=` edits for each MKV in one `mkvpropedit` invocation.
 
 When subtitles are not selected, subtitle reports are not generated, subtitle content is not extracted, and subtitle track names are not changed.
 
 40-minute delayed video and audio processing:
 
 ```powershell
-Start-Sleep -Seconds 2400; make process ARGS="--video --audio"
+Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio" INPUT_DIR="E:/Movies/"
 ```
 
 40-minute delayed video and audio processing with explicit English default audio:
 
 ```powershell
-Start-Sleep -Seconds 2400; make process ARGS="--video --audio --default-audio-language English"
+Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --set-default-audio --default-audio-language English" INPUT_DIR="E:/Movies/"
 ```
 
 40-minute delayed complete processing:
 
 ```powershell
-Start-Sleep -Seconds 2400; make process ARGS="--video --audio --subtitles"
+Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles" INPUT_DIR="E:/Movies/"
 ```
 
 40-minute delayed complete processing with explicit English default audio:
 
 ```powershell
-Start-Sleep -Seconds 2400; make process ARGS="--video --audio --subtitles --default-audio-language English"
+Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English" INPUT_DIR="E:/Movies/"
 ```
 
 Unknown audio or subtitle languages are skipped safely. Image-based subtitle tracks are renamed only when reliable metadata resolves the language.
