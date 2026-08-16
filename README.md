@@ -8,7 +8,7 @@
   
 ---
 
-Metadata-only Matroska track metadata renamer that generates human-editable audio and embedded-subtitle reports, sets the video track name from the filename, can opt in to selecting one default audio language, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
+Metadata-only Matroska track metadata renamer that generates human-editable audio and embedded-subtitle reports, sets the video track name from the filename, sets the selected default audio language to English unless configured otherwise, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
 
 ---
 
@@ -133,7 +133,7 @@ make help
 make report ARGS="--audio"
 make rename ARGS="--video --audio"
 make process ARGS="--video --audio --subtitles"
-make process ARGS="--video --audio --set-default-audio"
+make process ARGS="--video --audio --no-set-default-audio"
 ```
 
 Supported processing flags:
@@ -291,7 +291,7 @@ mkvpropedit FILE --edit track:sN --set name=NEW_NAME
 
 ### Default audio selection
 
-Default-audio selection means setting the Matroska audio-track `flag-default` metadata. It is disabled unless `--set-default-audio` is supplied.
+Default-audio selection means setting the Matroska audio-track `flag-default` metadata. It is enabled by default whenever `--audio` is selected.
 
 Preferred default audio language defaults to:
 
@@ -299,21 +299,21 @@ Preferred default audio language defaults to:
 English
 ```
 
-This preferred language does not activate the feature by itself. The actual Matroska `language` field is not changed.
+The actual Matroska `language` field is not changed.
 
-Video/audio processing without changing default audio:
+Video/audio processing with English default audio:
 
 ```powershell
 make process ARGS="--video --audio"
 ```
 
-Video/audio and make English audio default:
+Equivalent explicit English:
 
 ```powershell
 make process ARGS="--video --audio --set-default-audio"
 ```
 
-Explicit English:
+Explicit English with language option:
 
 ```powershell
 make process ARGS="--video --audio --set-default-audio --default-audio-language English"
@@ -322,10 +322,10 @@ make process ARGS="--video --audio --set-default-audio --default-audio-language 
 Portuguese:
 
 ```powershell
-make process ARGS="--video --audio --set-default-audio --default-audio-language Portuguese"
+make process ARGS="--video --audio --default-audio-language Portuguese"
 ```
 
-Explicitly keep default-audio changes disabled:
+Disable default-audio changes:
 
 ```powershell
 make process ARGS="--video --audio --no-set-default-audio"
@@ -350,7 +350,7 @@ make process ARGS="--video --audio --subtitles"
 Everything with English audio default:
 
 ```powershell
-make process ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English"
+make process ARGS="--video --audio --subtitles --default-audio-language English"
 ```
 
 This runs `auto_track_metadata_renamer.py`, generates the selected audio and/or subtitle reports, recursively discovers supported Matroska files under `INPUT_DIR`, sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies selected video/audio/subtitle `name=` edits plus optional audio `flag-default=` edits for each MKV in one `mkvpropedit` invocation.
@@ -363,10 +363,10 @@ When subtitles are not selected, subtitle reports are not generated, subtitle co
 Start-Sleep -Seconds 2400; make process ARGS="--video --audio"
 ```
 
-40-minute delayed video and audio processing with English default audio:
+40-minute delayed video and audio processing with explicit English default audio:
 
 ```powershell
-Start-Sleep -Seconds 2400; make process ARGS="--video --audio --set-default-audio --default-audio-language English"
+Start-Sleep -Seconds 2400; make process ARGS="--video --audio --default-audio-language English"
 ```
 
 40-minute delayed complete processing:
@@ -375,10 +375,10 @@ Start-Sleep -Seconds 2400; make process ARGS="--video --audio --set-default-audi
 Start-Sleep -Seconds 2400; make process ARGS="--video --audio --subtitles"
 ```
 
-40-minute delayed complete processing with English default audio:
+40-minute delayed complete processing with explicit English default audio:
 
 ```powershell
-Start-Sleep -Seconds 2400; make process ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English"
+Start-Sleep -Seconds 2400; make process ARGS="--video --audio --subtitles --default-audio-language English"
 ```
 
 Unknown audio or subtitle languages are skipped safely. Image-based subtitle tracks are renamed only when reliable metadata resolves the language.
