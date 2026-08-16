@@ -1,406 +1,280 @@
 """
-================================================================================
-<PROJECT OR SCRIPT TITLE>
-================================================================================
-Author      : Breno Farias da Silva
-Created     : <YYYY-MM-DD>
-Description :
-    <Provide a concise and complete overview of what this script does.>
-    <Mention its purpose, scope, and relevance to the larger project.>
-
-    Key features include:
-        - <Feature 1 — e.g., automatic data loading and preprocessing>
-        - <Feature 2 — e.g., model training and evaluation>
-        - <Feature 3 — e.g., visualization or report generation>
-        - <Feature 4 — e.g., logging or notification system>
-        - <Feature 5 — e.g., integration with other modules or datasets>
-
-Usage:
-    1. <Explain any configuration steps before running, such as editing variables or paths.>
-    2. <Describe how to execute the script — typically via Makefile or Python.>
-        $ make <target>   or   $ python <script_name>.py
-    3. <List what outputs are expected or where results are saved.>
-
-Outputs:
-    - <Output file or directory 1 — e.g., results.csv>
-    - <Output file or directory 2 — e.g., Feature_Analysis/plots/>
-    - <Output file or directory 3 — e.g., logs/output.txt>
-
-TODOs:
-    - <Add a task or improvement — e.g., implement CLI argument parsing.>
-    - <Add another improvement — e.g., extend support to Parquet files.>
-    - <Add optimization — e.g., parallelize evaluation loop.>
-    - <Add robustness — e.g., error handling or data validation.>
-
-Dependencies:
-    - Python >= <version>
-    - <Library 1 — e.g., pandas>
-    - <Library 2 — e.g., numpy>
-    - <Library 3 — e.g., scikit-learn>
-    - <Library 4 — e.g., matplotlib, seaborn, tqdm, colorama>
-
-Assumptions & Notes:
-    - <List any key assumptions — e.g., last column is the target variable.>
-    - <Mention data format — e.g., CSV files only.>
-    - <Mention platform or OS-specific notes — e.g., sound disabled on Windows.>
-    - <Note on output structure or reusability.>
+Rename Matroska audio-track name metadata from an editable report.
 """
 
-import atexit  # For playing a sound when the program finishes
-import datetime  # For getting the current date and time
-import os  # For running a command in the terminal
-import platform  # For getting the operating system name
-import sys  # For system-specific parameters and functions
-from colorama import Style  # For coloring the terminal
-from pathlib import Path  # For handling file paths
+from __future__ import annotations  # Enable modern annotations on supported Python versions.
+
+from dataclasses import dataclass, field  # Define typed workflow records.
+from pathlib import Path  # Represent filesystem paths.
+from typing import Any  # Type dynamic JSON data.
+import json  # Read report JSON.
+
+from mkvpropedit_wrapper import AudioTrackRename, MkvpropeditResult, apply_audio_track_renames, valid_target_name  # Apply mkvpropedit edits.
+from report import INPUT_DIR, REPORT_PATH, SUPPORTED_EXTENSIONS, parse_group_key, parse_occurrence_key, raw_track_name, read_audio_tracks  # Reuse report parsing and metadata inspection.
 
 
-# Macros:
-class BackgroundColors:  # Colors for the terminal
-    CYAN = "\033[96m"  # Cyan
-    GREEN = "\033[92m"  # Green
-    YELLOW = "\033[93m"  # Yellow
-    RED = "\033[91m"  # Red
-    BOLD = "\033[1m"  # Bold
-    UNDERLINE = "\033[4m"  # Underline
-    CLEAR_TERMINAL = "\033[H\033[J"  # Clear the terminal
-
-
-# Execution Constants:
-VERBOSE = False  # Set to True to output verbose messages
-
-# Sound Constants:
-SOUND_COMMANDS = {
-    "Darwin": "afplay",
-    "Linux": "aplay",
-    "Windows": "start",
-}  # The commands to play a sound for each operating system
-SOUND_FILE = "./.assets/Sounds/NotificationSound.wav"  # The path to the sound file
-
-# RUN_FUNCTIONS:
-RUN_FUNCTIONS = {
-    "Play Sound": True,  # Set to True to play a sound when the program finishes
-}
-
-# Functions Definitions:
-
-
-def verbose_output(true_string="", false_string=""):
+@dataclass
+class RenameSummary:
     """
-    Outputs a message if the VERBOSE constant is set to True.
-
-    :param true_string: The string to be outputted if the VERBOSE constant is set to True.
-    :param false_string: The string to be outputted if the VERBOSE constant is set to False.
-    :return: None
+    Stores overall rename workflow counts.
     """
 
-    if VERBOSE and true_string != "":  # If VERBOSE is True and a true_string was provided
-        print(true_string)  # Output the true statement string
-    elif false_string != "":  # If a false_string was provided
-        print(false_string)  # Output the false statement string
+    planned: int = 0  # Store planned rename count.
+    changed: int = 0  # Store successful changed track count.
+    warnings: int = 0  # Store warning count from completed mkvpropedit edits.
+    skipped: int = 0  # Store skipped track count.
+    failed: int = 0  # Store failed file or track count.
+    messages: list[str] = field(default_factory=list)  # Store workflow messages.
 
 
-def resolve_entry_with_trailing_space(current_path: str, entry: str, stripped_part: str) -> str:
+@dataclass(frozen=True)
+class PlannedRename:
     """
-    Resolve and optionally rename a directory entry with trailing spaces.
-
-    :param current_path: Current directory path.
-    :param entry: Directory entry name.
-    :param stripped_part: Normalized target name without surrounding spaces.
-    :return: Resolved path after optional rename.
+    Stores one validated report-driven rename request.
     """
 
-    try:  # Wrap full function logic to ensure safe execution
-        resolved = os.path.join(current_path, entry)  # Build resolved path
-
-        if entry != stripped_part:  # Verify trailing spaces exist
-            corrected = os.path.join(current_path, stripped_part)  # Build corrected path
-            try:  # Attempt to rename entry
-                os.rename(resolved, corrected)  # Rename entry to stripped version
-                verbose_output(true_string=f"{BackgroundColors.GREEN}Renamed: {BackgroundColors.CYAN}{resolved}{BackgroundColors.GREEN} -> {BackgroundColors.CYAN}{corrected}{Style.RESET_ALL}")  # Log rename
-                resolved = corrected  # Update resolved path after rename
-            except Exception:  # Handle rename failure
-                verbose_output(true_string=f"{BackgroundColors.RED}Failed to rename: {BackgroundColors.CYAN}{resolved}{Style.RESET_ALL}")  # Log failure
-
-        return resolved  # Return resolved path
-    except Exception:  # Catch unexpected errors
-        return os.path.join(current_path, entry)  # Return fallback resolved path
+    file_path: Path  # Store absolute file path.
+    relative_path: str  # Store report relative path.
+    audio_position: int  # Store zero-based audio position.
+    track_id: int | None  # Store MKVToolNix track ID from report.
+    track_uid: int | None  # Store Matroska track UID from report.
+    current_name: str  # Store current track name from report group.
+    target_name: str  # Store desired target name.
 
 
-def resolve_full_trailing_space_path(filepath: str) -> str:
+def load_report_data(report_path: Path) -> dict[str, Any] | None:
     """
-    Resolve trailing space issues across all path components.
+    Load report JSON data safely.
 
-    :param filepath: Path to resolve potential trailing space mismatches.
-    :return: Corrected full path if matches are found, otherwise original filepath.
+    :param report_path: Report JSON path.
+    :return: Report data object or None.
     """
 
-    try:  # Wrap full function logic to ensure safe execution
-        verbose_output(true_string=f"{BackgroundColors.GREEN}Resolving full trailing space path for: {BackgroundColors.CYAN}{filepath}{Style.RESET_ALL}")  # Log start
+    if not report_path.exists():  # Verify report file exists.
+        print(f"Report not found: {report_path}")  # Report missing report.
+        return None  # Return no report data.
 
-        if not isinstance(filepath, str) or not filepath:  # Verify filepath validity
-            verbose_output(true_string=f"{BackgroundColors.YELLOW}Invalid filepath provided, skipping resolution.{Style.RESET_ALL}")  # Log invalid input
-            return filepath  # Return original
+    try:  # Read and parse report JSON.
+        report_data = json.loads(report_path.read_text(encoding="utf-8"))  # Load report JSON.
+    except (OSError, json.JSONDecodeError) as error:  # Handle unreadable or malformed report.
+        print(f"Report could not be read: {error}")  # Report load failure.
+        return None  # Return no report data.
 
-        filepath = os.path.expanduser(filepath)  # Expand ~ to user directory
-        parts = filepath.split(os.sep)  # Split path into components
+    if not isinstance(report_data, dict):  # Verify top-level report shape.
+        print("Report top-level JSON value must be an object.")  # Report malformed shape.
+        return None  # Return no report data.
 
-        if not parts:  # Verify path parts exist
-            return filepath  # Return original
-
-        if filepath.startswith(os.sep):  # Handle absolute paths
-            current_path = os.sep  # Start from root
-            parts = parts[1:]  # Remove empty root part
-        else:
-            current_path = parts[0] if parts[0] else os.getcwd()  # Initialize base
-            parts = parts[1:] if parts[0] else parts  # Adjust parts
-
-        for part in parts:  # Iterate over each path component
-            if part == "":  # Skip empty parts
-                continue  # Continue iteration
-
-            try:  # Attempt to list current directory
-                entries = os.listdir(current_path) if os.path.isdir(current_path) else []  # List current directory entries
-            except Exception:  # Handle failure to list directory contents
-                verbose_output(true_string=f"{BackgroundColors.RED}Failed to list directory: {BackgroundColors.CYAN}{current_path}{Style.RESET_ALL}")  # Log failure
-                return filepath  # Return original
-
-            stripped_part = part.strip()  # Normalize current part
-            match_found = False  # Initialize match flag
-
-            for entry in entries:  # Iterate directory entries
-                try:  # Attempt safe comparison for each entry
-                    if entry.strip() == stripped_part:  # Compare stripped names
-                        current_path = resolve_entry_with_trailing_space(current_path, entry, stripped_part)  # Resolve entry and update current path
-                        match_found = True  # Mark match
-                        break  # Stop searching
-                except Exception:  # Handle any unexpected error during comparison
-                    continue  # Continue on error
-
-            if not match_found:  # If no match found for this segment
-                verbose_output(true_string=f"{BackgroundColors.YELLOW}No match for segment: {BackgroundColors.CYAN}{part}{Style.RESET_ALL}")  # Log miss
-                return filepath  # Return original
-
-        return current_path  # Return fully resolved path
-
-    except Exception:  # Catch unexpected errors to maintain stability
-        verbose_output(true_string=f"{BackgroundColors.RED}Error resolving full path: {BackgroundColors.CYAN}{filepath}{Style.RESET_ALL}")  # Log error
-        return filepath  # Return original
+    return report_data  # Return parsed report data.
 
 
-def verify_filepath_exists(filepath):
+def resolve_target_name(desired_value: object, detected_value: object) -> str:
     """
-    Verify if a file or folder exists at the specified path.
+    Resolve target name from desired report value or detected occurrence language.
 
-    :param filepath: Path to the file or folder
-    :return: True if the file or folder exists, False otherwise
+    :param desired_value: Group desired_new_name value.
+    :param detected_value: Occurrence detected language value.
+    :return: Target name or empty text.
     """
 
-    try:  # Wrap full function logic to ensure production-safe monitoring
-        verbose_output(
-            f"{BackgroundColors.GREEN}Verifying if the file or folder exists at the path: {BackgroundColors.CYAN}{filepath}{Style.RESET_ALL}"
-        )  # Output the verbose message
-        
-        if not isinstance(filepath, str) or not filepath.strip():  # Verify for non-string or empty/whitespace-only input   
-            verbose_output(true_string=f"{BackgroundColors.YELLOW}Invalid filepath provided, skipping existence verification.{Style.RESET_ALL}")  # Log invalid input
-            return False  # Return False for invalid input
-
-        if os.path.exists(filepath):  # Fast path: original input exists
-            return True  # Return True immediately
-
-        candidate = str(filepath).strip()  # Normalize input to string and strip surrounding whitespace
-
-        if (candidate.startswith("'") and candidate.endswith("'")) or (
-            candidate.startswith('"') and candidate.endswith('"')
-        ):  # Handle quoted paths from config files
-            candidate = candidate[1:-1].strip()  # Remove wrapping quotes and trim again
-
-        candidate = os.path.expanduser(candidate)  # Expand ~ to user home directory
-        candidate = os.path.normpath(candidate)  # Normalize path separators and structure
-
-        if os.path.exists(candidate):  # Verify normalized candidate directly
-            return True  # Return True if normalized path exists
-
-        repo_dir = os.path.dirname(os.path.abspath(__file__))  # Resolve repository directory
-        cwd = os.getcwd()  # Capture current working directory
-
-        alt = candidate.lstrip(os.sep) if candidate.startswith(os.sep) else candidate  # Prepare relative-safe path
-
-        repo_candidate = os.path.join(repo_dir, alt)  # Build repo-relative candidate
-        cwd_candidate = os.path.join(cwd, alt)  # Build cwd-relative candidate
-
-        for path_variant in (repo_candidate, cwd_candidate):  # Iterate alternative base paths
-            try:
-                normalized_variant = os.path.normpath(path_variant)  # Normalize variant
-                if os.path.exists(normalized_variant):  # Verify existence
-                    return True  # Return True if found
-            except Exception:
-                continue  # Continue safely on error
-
-        try:  # Attempt absolute path resolution as fallback
-            abs_candidate = os.path.abspath(candidate)  # Build absolute path
-            if os.path.exists(abs_candidate):  # Verify existence
-                return True  # Return True if found
-        except Exception:
-            pass  # Ignore resolution errors
-
-        for path_variant in (candidate, repo_candidate, cwd_candidate):  # Attempt trailing-space resolution on all variants
-            try:  # Attempt to resolve trailing space issues across path components for this variant
-                resolved = resolve_full_trailing_space_path(path_variant)  # Resolve trailing space issues across path components
-                if resolved != path_variant and os.path.exists(resolved):  # Verify resolved path exists
-                    verbose_output(
-                        f"{BackgroundColors.YELLOW}Resolved trailing space mismatch: {BackgroundColors.CYAN}{path_variant}{BackgroundColors.YELLOW} -> {BackgroundColors.CYAN}{resolved}{Style.RESET_ALL}"
-                    )  # Log successful resolution
-                    return True  # Return True if corrected path exists
-            except Exception:  # Catch any exception during trailing space resolution   
-                continue  # Continue safely on error
-
-        return False  # Not found after all resolution strategies
-    except Exception as e:  # Catch any exception to ensure logging and Telegram alert
-        print(str(e))  # Print error to terminal for server logs
-        raise  # Re-raise to preserve original failure semantics
+    desired_name = valid_target_name(desired_value) if isinstance(desired_value, str) else ""  # Normalize desired value.
+    if desired_name != "":  # Verify desired name is configured.
+        return desired_name  # Return manual desired name.
+    return valid_target_name(detected_value) if isinstance(detected_value, str) else ""  # Return detected language fallback.
 
 
-def to_seconds(obj):
+def collect_planned_renames(report_data: dict[str, Any], input_dir: Path, summary: RenameSummary) -> list[PlannedRename]:
     """
-    Converts various time-like objects to seconds.
-    
-    :param obj: The object to convert (can be int, float, timedelta, datetime, etc.)
-    :return: The equivalent time in seconds as a float, or None if conversion fails
-    """
-    
-    if obj is None:  # None can't be converted
-        return None  # Signal failure to convert
-    if isinstance(obj, (int, float)):  # Already numeric (seconds or timestamp)
-        return float(obj)  # Return as float seconds
-    if hasattr(obj, "total_seconds"):  # Timedelta-like objects
-        try:  # Attempt to call total_seconds()
-            return float(obj.total_seconds())  # Use the total_seconds() method
-        except Exception:
-            pass  # Fallthrough on error
-    if hasattr(obj, "timestamp"):  # Datetime-like objects
-        try:  # Attempt to call timestamp()
-            return float(obj.timestamp())  # Use timestamp() to get seconds since epoch
-        except Exception:
-            pass  # Fallthrough on error
-    return None  # Couldn't convert
+    Collect report-driven rename requests before filesystem validation.
 
-
-def calculate_execution_time(start_time, finish_time=None):
-    """
-    Calculates the execution time and returns a human-readable string.
-
-    Accepts either:
-    - Two datetimes/timedeltas: `calculate_execution_time(start, finish)`
-    - A single timedelta or numeric seconds: `calculate_execution_time(delta)`
-    - Two numeric timestamps (seconds): `calculate_execution_time(start_s, finish_s)`
-
-    Returns a string like "1h 2m 3s".
+    :param report_data: Parsed report JSON data.
+    :param input_dir: Input directory path.
+    :param summary: Mutable workflow summary.
+    :return: Planned rename requests.
     """
 
-    if finish_time is None:  # Single-argument mode: start_time already represents duration or seconds
-        total_seconds = to_seconds(start_time)  # Try to convert provided value to seconds
-        if total_seconds is None:  # Conversion failed
-            try:  # Attempt numeric coercion
-                total_seconds = float(start_time)  # Attempt numeric coercion
-            except Exception:
-                total_seconds = 0.0  # Fallback to zero
-    else:  # Two-argument mode: Compute difference finish_time - start_time
-        st = to_seconds(start_time)  # Convert start to seconds if possible
-        ft = to_seconds(finish_time)  # Convert finish to seconds if possible
-        if st is not None and ft is not None:  # Both converted successfully
-            total_seconds = ft - st  # Direct numeric subtraction
-        else:  # Fallback to other methods
-            try:  # Attempt to subtract (works for datetimes/timedeltas)
-                delta = finish_time - start_time  # Try subtracting (works for datetimes/timedeltas)
-                total_seconds = float(delta.total_seconds())  # Get seconds from the resulting timedelta
-            except Exception:  # Subtraction failed
-                try:  # Final attempt: Numeric coercion
-                    total_seconds = float(finish_time) - float(start_time)  # Final numeric coercion attempt
-                except Exception:  # Numeric coercion failed
-                    total_seconds = 0.0  # Fallback to zero on failure
+    planned_renames: list[PlannedRename] = []  # Store rename requests.
 
-    if total_seconds is None:  # Ensure a numeric value
-        total_seconds = 0.0  # Default to zero
-    if total_seconds < 0:  # Normalize negative durations
-        total_seconds = abs(total_seconds)  # Use absolute value
+    for group_key, group_value in report_data.items():  # Iterate current-name groups.
+        if not isinstance(group_key, str) or not isinstance(group_value, dict):  # Verify group shape.
+            summary.skipped += 1  # Count malformed group skip.
+            summary.messages.append(f"Skipped malformed group: {group_key}")  # Store skip reason.
+            continue  # Skip malformed group.
 
-    days = int(total_seconds // 86400)  # Compute full days
-    hours = int((total_seconds % 86400) // 3600)  # Compute remaining hours
-    minutes = int((total_seconds % 3600) // 60)  # Compute remaining minutes
-    seconds = int(total_seconds % 60)  # Compute remaining seconds
+        display_name, parsed_count = parse_group_key(group_key)  # Parse current-name group key.
+        current_name = raw_track_name(display_name)  # Convert display marker to raw track name.
+        desired_value = group_value.get("desired_new_name")  # Read group desired name.
+        occurrence_keys = [key for key in group_value if key != "desired_new_name"]  # Collect occurrence entries.
+        if parsed_count is not None and parsed_count != len(occurrence_keys):  # Verify group count is still self-consistent.
+            summary.messages.append(f"Group count mismatch in report: {group_key}")  # Store mismatch warning.
 
-    if days > 0:  # Include days when present
-        return f"{days}d {hours}h {minutes}m {seconds}s"  # Return formatted days+hours+minutes+seconds
-    if hours > 0:  # Include hours when present
-        return f"{hours}h {minutes}m {seconds}s"  # Return formatted hours+minutes+seconds
-    if minutes > 0:  # Include minutes when present
-        return f"{minutes}m {seconds}s"  # Return formatted minutes+seconds
-    return f"{seconds}s"  # Fallback: only seconds
+        for occurrence_key in occurrence_keys:  # Iterate occurrence entries.
+            detected_value = group_value.get(occurrence_key)  # Read occurrence detected language.
+            target_name = resolve_target_name(desired_value, detected_value)  # Resolve target name.
+            parsed_occurrence = parse_occurrence_key(str(occurrence_key))  # Parse occurrence key.
+            if parsed_occurrence is None:  # Verify occurrence key has targetable metadata.
+                summary.skipped += 1  # Count skipped occurrence.
+                summary.messages.append(f"Skipped malformed occurrence key: {occurrence_key}")  # Store skip reason.
+                continue  # Skip malformed occurrence.
+            if target_name == "":  # Verify a target name exists.
+                summary.skipped += 1  # Count skipped occurrence.
+                summary.messages.append(f"Skipped unknown target for: {occurrence_key}")  # Store skip reason.
+                continue  # Skip unresolved target.
+
+            relative_path, audio_position, track_id, track_uid = parsed_occurrence  # Unpack occurrence target.
+            file_path = input_dir / Path(relative_path)  # Build absolute file path.
+            planned_renames.append(PlannedRename(file_path, relative_path, audio_position, track_id, track_uid, current_name, target_name))  # Store planned rename.
+
+    return planned_renames  # Return planned renames.
 
 
-def play_sound():
+def group_plans_by_file(plans: list[PlannedRename]) -> dict[Path, list[PlannedRename]]:
     """
-    Plays a sound when the program finishes and skips if the operating system is Windows.
+    Group planned renames by media file.
 
-    :param: None
-    :return: None
+    :param plans: Planned rename requests.
+    :return: Plans keyed by file path.
     """
 
-    current_os = platform.system()  # Get the current operating system
-    if current_os == "Windows":  # If the current operating system is Windows
-        return  # Do nothing
-
-    if verify_filepath_exists(SOUND_FILE):  # If the sound file exists
-        if current_os in SOUND_COMMANDS:  # If the platform.system() is in the SOUND_COMMANDS dictionary
-            os.system(f"{SOUND_COMMANDS[current_os]} {SOUND_FILE}")  # Play the sound
-        else:  # If the platform.system() is not in the SOUND_COMMANDS dictionary
-            print(
-                f"{BackgroundColors.RED}The {BackgroundColors.CYAN}{current_os}{BackgroundColors.RED} is not in the {BackgroundColors.CYAN}SOUND_COMMANDS dictionary{BackgroundColors.RED}. Please add it!{Style.RESET_ALL}"
-            )
-    else:  # If the sound file does not exist
-        print(
-            f"{BackgroundColors.RED}Sound file {BackgroundColors.CYAN}{SOUND_FILE}{BackgroundColors.RED} not found. Make sure the file exists.{Style.RESET_ALL}"
-        )
+    grouped_plans: dict[Path, list[PlannedRename]] = {}  # Store plans by file path.
+    for plan in plans:  # Iterate plans.
+        grouped_plans.setdefault(plan.file_path, []).append(plan)  # Add plan to file group.
+    return grouped_plans  # Return grouped plans.
 
 
-def main():
+def validate_plans_for_file(file_path: Path, plans: list[PlannedRename], input_dir: Path, summary: RenameSummary) -> list[AudioTrackRename]:
     """
-    Main function.
+    Validate planned renames against current file metadata.
 
-    :param: None
-    :return: None
+    :param file_path: Media file path.
+    :param plans: Planned renames for the file.
+    :param input_dir: Input directory path.
+    :param summary: Mutable workflow summary.
+    :return: mkvpropedit rename operations.
     """
 
-    print(
-        f"{BackgroundColors.CLEAR_TERMINAL}{BackgroundColors.BOLD}{BackgroundColors.GREEN}Welcome to the {BackgroundColors.CYAN}Main Template Python{BackgroundColors.GREEN} program!{Style.RESET_ALL}",
-        end="\n\n",
-    )  # Output the welcome message
-    
-    start_time = datetime.datetime.now()  # Get the start time of the program
-    
-    # Implement logic here
+    if not file_path.exists():  # Verify media file still exists.
+        summary.failed += len(plans)  # Count missing-file failures.
+        summary.messages.append(f"Missing file: {file_path}")  # Store failure reason.
+        return []  # Return no operations.
+    if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:  # Verify file remains Matroska video.
+        summary.skipped += len(plans)  # Count unsupported skips.
+        summary.messages.append(f"Unsupported container skipped: {file_path}")  # Store skip reason.
+        return []  # Return no operations.
 
-    finish_time = datetime.datetime.now()  # Get the finish time of the program
-    
-    print(
-        f"{BackgroundColors.GREEN}Start time: {BackgroundColors.CYAN}{start_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Finish time: {BackgroundColors.CYAN}{finish_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Execution time: {BackgroundColors.CYAN}{calculate_execution_time(start_time, finish_time)}{Style.RESET_ALL}"
-    )  # Output the start and finish times
-    
-    print(
-        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Program finished.{Style.RESET_ALL}"
-    )  # Output the end of the program message
-    
-    (
-        atexit.register(play_sound) if RUN_FUNCTIONS["Play Sound"] else None
-    )  # Register the play_sound function to be called when the program finishes
+    try:  # Read current metadata without sampled detection.
+        current_tracks = read_audio_tracks(file_path, input_dir, False)  # Inspect current audio metadata.
+    except Exception as error:  # Handle corrupt or unreadable file.
+        summary.failed += len(plans)  # Count inspection failures.
+        summary.messages.append(f"Metadata read failed for {file_path}: {error}")  # Store failure reason.
+        return []  # Return no operations.
+
+    operations: list[AudioTrackRename] = []  # Store validated mkvpropedit operations.
+    for plan in sorted(plans, key=lambda item: item.audio_position):  # Iterate plans by audio position.
+        if plan.audio_position >= len(current_tracks):  # Verify track ordinal still exists.
+            summary.failed += 1  # Count missing-track failure.
+            summary.messages.append(f"Audio track missing in {plan.relative_path}: audio {plan.audio_position + 1}")  # Store failure reason.
+            continue  # Skip missing track.
+
+        current_track = current_tracks[plan.audio_position]  # Read current track by audio ordinal.
+        if plan.track_uid is not None and current_track.track_uid != plan.track_uid:  # Verify Matroska track UID still matches the report.
+            summary.failed += 1  # Count stale-report failure.
+            summary.messages.append(f"Track UID mismatch in {plan.relative_path} audio {plan.audio_position + 1}: report={plan.track_uid!r}, file={current_track.track_uid!r}")  # Store failure reason.
+            continue  # Skip stale occurrence.
+        if plan.track_id is not None and current_track.stream_index != plan.track_id:  # Verify MKVToolNix track ID still matches the report.
+            summary.failed += 1  # Count stale-report failure.
+            summary.messages.append(f"Track ID mismatch in {plan.relative_path} audio {plan.audio_position + 1}: report={plan.track_id!r}, file={current_track.stream_index!r}")  # Store failure reason.
+            continue  # Skip stale occurrence.
+        if current_track.current_name == plan.target_name:  # Verify target already applied.
+            summary.skipped += 1  # Count no-op skip.
+            summary.messages.append(f"Already named {plan.target_name}: {plan.relative_path} audio {plan.audio_position + 1}")  # Store skip reason.
+            continue  # Skip no-op edit.
+        if current_track.current_name != plan.current_name:  # Verify report is not stale for this exact track.
+            summary.failed += 1  # Count stale-report failure.
+            summary.messages.append(f"Current name mismatch in {plan.relative_path} audio {plan.audio_position + 1}: report={plan.current_name!r}, file={current_track.current_name!r}")  # Store failure reason.
+            continue  # Skip stale occurrence.
+
+        operations.append(AudioTrackRename(plan.audio_position, current_track.current_name, plan.target_name, current_track.track_uid))  # Store validated operation.
+        summary.planned += 1  # Count validated edit.
+
+    return operations  # Return validated operations.
 
 
-if __name__ == "__main__":
+def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], input_dir: Path, summary: RenameSummary) -> list[MkvpropeditResult]:
     """
-    This is the standard boilerplate that calls the main() function.
+    Apply validated renames one mkvpropedit invocation per file.
 
-    :return: None
+    :param grouped_plans: Planned renames keyed by file path.
+    :param input_dir: Input directory path.
+    :param summary: Mutable workflow summary.
+    :return: mkvpropedit results.
     """
 
-    main()  # Call the main function
+    results: list[MkvpropeditResult] = []  # Store mkvpropedit results.
+    for file_path in sorted(grouped_plans, key=lambda path: path.as_posix().lower()):  # Iterate files deterministically.
+        operations = validate_plans_for_file(file_path, grouped_plans[file_path], input_dir, summary)  # Validate operations against current metadata.
+        if not operations:  # Verify file has operations after validation.
+            continue  # Skip files without edits.
+
+        result = apply_audio_track_renames(file_path, operations)  # Apply mkvpropedit edits.
+        results.append(result)  # Store command result.
+        if result.success and result.warning:  # Verify mkvpropedit completed with warnings.
+            summary.changed += result.changed_count  # Count changes because MKVToolNix continued after warnings.
+            summary.warnings += 1  # Count warning-bearing file.
+            warning_text = (result.stderr or result.stdout).strip()  # Resolve warning output text.
+            summary.messages.append(f"mkvpropedit warning for {file_path}: {warning_text}")  # Store warning reason.
+            print(f"Renamed {result.changed_count} audio track(s) with warning: {file_path}")  # Report warning completion.
+        elif result.success:  # Verify mkvpropedit succeeded cleanly.
+            summary.changed += result.changed_count  # Count successful changes.
+            print(f"Renamed {result.changed_count} audio track(s): {file_path}")  # Report file success.
+        else:  # Handle mkvpropedit failure.
+            summary.failed += result.changed_count  # Count failed changes.
+            summary.messages.append(f"mkvpropedit failed for {file_path}: {result.stderr.strip()}")  # Store failure reason.
+            print(f"mkvpropedit failed for {file_path}: {result.stderr.strip()}")  # Report file failure.
+
+    return results  # Return command results.
+
+
+def rename_audio_tracks(input_dir: str = INPUT_DIR, report_path: Path = REPORT_PATH) -> RenameSummary:
+    """
+    Rename audio-track metadata according to report.json.
+
+    :param input_dir: Input directory path string.
+    :param report_path: Report JSON path.
+    :return: Rename workflow summary.
+    """
+
+    summary = RenameSummary()  # Initialize workflow summary.
+    root_path = Path(input_dir)  # Resolve configured input directory.
+    if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
+        print(f"Input directory not found: {root_path}")  # Report missing input directory.
+        summary.failed += 1  # Count missing input as failure.
+        return summary  # Return summary.
+
+    report_data = load_report_data(report_path)  # Load report JSON.
+    if report_data is None:  # Verify report loaded.
+        summary.failed += 1  # Count missing or malformed report.
+        return summary  # Return summary.
+
+    planned_renames = collect_planned_renames(report_data, root_path, summary)  # Collect report rename requests.
+    grouped_plans = group_plans_by_file(planned_renames)  # Group plans by media file.
+    apply_grouped_renames(grouped_plans, root_path, summary)  # Apply validated rename operations.
+
+    print(f"Summary: planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
+    for message in summary.messages:  # Iterate accumulated messages.
+        print(message)  # Report detailed message.
+
+    return summary  # Return workflow summary.
+
+
+def main() -> None:
+    """
+    Run audio-track metadata renaming from report.json.
+
+    :return: None.
+    """
+
+    rename_audio_tracks()  # Rename tracks using default configuration.
+
+
+if __name__ == "__main__":  # Run script entry point when executed directly.
+    main()  # Execute default rename workflow.
