@@ -20,7 +20,7 @@ from subtitle_language_detector import detect_subtitle_track_language  # Resolve
 
 
 INPUT_DIR = "E:/Movies/"  # Store default recursive input directory.
-REPORT_PATH = Path(__file__).with_name("report.json")  # Store report output beside this script.
+AUDIO_REPORT_PATH = Path(__file__).with_name("audio_report.json")  # Store audio report output beside this script.
 SUBTITLE_REPORT_PATH = Path(__file__).with_name("subtitles_report.json")  # Store subtitle report output beside this script.
 SUPPORTED_EXTENSIONS = (".mkv", ".mk3d")  # Limit edits to Matroska video containers supported by mkvpropedit.
 MISSING_TRACK_NAME = "<missing audio track name>"  # Display unnamed tracks without colliding with empty JSON keys.
@@ -655,7 +655,7 @@ def resolve_default_desired_name(tracks: list[Any], existing_value: str | None) 
     return existing_value if existing_value is not None else ""  # Return existing empty value or fresh empty value.
 
 
-def build_report_data(tracks: list[AudioTrackRecord], existing_desired_names: dict[str, str]) -> dict[str, dict[str, str]]:
+def build_audio_report_data(tracks: list[AudioTrackRecord], existing_desired_names: dict[str, str]) -> dict[str, dict[str, str]]:
     """
     Build deterministic human-editable report data.
 
@@ -728,9 +728,9 @@ def write_report(report_path: Path, report_data: dict[str, dict[str, str]]) -> N
     os.replace(temp_name, report_path)  # Atomically replace final report.
 
 
-def generate_report(input_dir: str = INPUT_DIR, report_path: Path = REPORT_PATH) -> dict[str, dict[str, str]]:
+def generate_audio_report(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH) -> dict[str, dict[str, str]]:
     """
-    Generate report.json from current audio-track metadata.
+    Generate audio_report.json from current audio-track metadata.
 
     :param input_dir: Input directory path string.
     :param report_path: Output report path.
@@ -744,7 +744,7 @@ def generate_report(input_dir: str = INPUT_DIR, report_path: Path = REPORT_PATH)
 
     existing_desired_names = read_existing_desired_names(report_path)  # Preserve safe manual desired names.
     tracks = collect_audio_tracks(root_path)  # Collect all audio tracks.
-    report_data = build_report_data(tracks, existing_desired_names)  # Build report JSON object.
+    report_data = build_audio_report_data(tracks, existing_desired_names)  # Build report JSON object.
     write_report(report_path, report_data)  # Write report safely.
     print(f"Report written: {report_path}")  # Report output path.
     return report_data  # Return generated data.
@@ -779,7 +779,7 @@ def main() -> None:
     :return: None.
     """
 
-    generate_report()  # Generate default report.
+    generate_audio_report()  # Generate default audio report.
 
 
 if __name__ == "__main__":  # Run script entry point when executed directly.
