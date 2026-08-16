@@ -24,7 +24,7 @@ install_system_packages() {
     if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
         brew install ffmpeg
     fi
-    if ! command -v mkvpropedit >/dev/null 2>&1 || ! command -v mkvmerge >/dev/null 2>&1; then
+    if ! command -v mkvpropedit >/dev/null 2>&1 || ! command -v mkvmerge >/dev/null 2>&1 || ! command -v mkvextract >/dev/null 2>&1; then
         brew install mkvtoolnix
     fi
 }
@@ -55,4 +55,5 @@ verify_command ffmpeg
 verify_command ffprobe
 verify_command mkvpropedit
 verify_command mkvmerge
+verify_command mkvextract
 echo "Installation complete."
