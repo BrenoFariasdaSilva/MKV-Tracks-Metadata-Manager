@@ -9,12 +9,28 @@ ifeq ($(OS), Windows) # Windows
 	PYTHON_CMD := python
 	CLEAR_CMD := cls
 	TIME_CMD :=
+	INSTALL_CMD := cmd /c install_windows.bat
+else ifeq ($(findstring MINGW,$(OS)),MINGW) # Git Bash on Windows
+	PYTHON := $(VENV)/Scripts/python.exe
+	PIP := $(VENV)/Scripts/pip.exe
+	PYTHON_CMD := python
+	CLEAR_CMD := clear
+	TIME_CMD :=
+	INSTALL_CMD := cmd /c install_windows.bat
+else ifeq ($(OS), Darwin) # macOS
+	PYTHON := $(VENV)/bin/python3
+	PIP := $(VENV)/bin/pip
+	PYTHON_CMD := python3
+	CLEAR_CMD := clear
+	TIME_CMD := time
+	INSTALL_CMD := bash ./install_macos.sh
 else # Unix-like
 	PYTHON := $(VENV)/bin/python3
 	PIP := $(VENV)/bin/pip
 	PYTHON_CMD := python3
 	CLEAR_CMD := clear
 	TIME_CMD := time
+	INSTALL_CMD := bash ./install_linux.sh
 endif
 
 # Logs directory
@@ -42,13 +58,23 @@ fi
 endif
 
 # Default target
-all: run
+all: report
 
 # Make Rules
-run: dependencies
+install:
+	$(INSTALL_CMD)
+
+run: rename
+
+report: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(call RUN_AND_LOG, ./main.py)
+	$(call RUN_AND_LOG, ./report.py)
+
+rename: dependencies
+	$(ENSURE_LOG_DIR)
+	$(CLEAR_CMD)
+	$(call RUN_AND_LOG, ./audio_tracks_renamer.py)
 
 # Create virtual environment if missing
 $(VENV):
@@ -70,4 +96,4 @@ clean:
 	find . -type f -name '*.pyc' -delete || del /S /Q *.pyc 2>nul
 	find . -type d -name '__pycache__' -delete || rmdir /S /Q __pycache__ 2>nul
 
-.PHONY: all run clean dependencies generate_requirements
+.PHONY: all install run report rename clean dependencies generate_requirements
