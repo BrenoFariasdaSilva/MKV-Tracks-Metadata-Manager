@@ -1,23 +1,28 @@
 # Variables
 VENV := venv
-OS := $(shell uname 2>/dev/null || echo Windows)
+HOST_OS := $(OS)
+ifeq ($(HOST_OS),Windows_NT)
+DETECTED_OS := Windows
+else
+DETECTED_OS := $(shell uname)
+endif
 
 # Detect correct Python and Pip commands based on OS
-ifeq ($(OS), Windows) # Windows
+ifeq ($(DETECTED_OS), Windows) # Windows
 	PYTHON := $(VENV)/Scripts/python.exe
 	PIP := $(VENV)/Scripts/pip.exe
 	PYTHON_CMD := python
 	CLEAR_CMD := cls
 	TIME_CMD :=
 	INSTALL_CMD := cmd /c install_windows.bat
-else ifeq ($(findstring MINGW,$(OS)),MINGW) # Git Bash on Windows
+else ifeq ($(findstring MINGW,$(DETECTED_OS)),MINGW) # Git Bash on Windows
 	PYTHON := $(VENV)/Scripts/python.exe
 	PIP := $(VENV)/Scripts/pip.exe
 	PYTHON_CMD := python
 	CLEAR_CMD := clear
 	TIME_CMD :=
 	INSTALL_CMD := cmd /c install_windows.bat
-else ifeq ($(OS), Darwin) # macOS
+else ifeq ($(DETECTED_OS), Darwin) # macOS
 	PYTHON := $(VENV)/bin/python3
 	PIP := $(VENV)/bin/pip
 	PYTHON_CMD := python3
@@ -44,7 +49,7 @@ ENSURE_LOG_DIR := @mkdir -p $(LOG_DIR) 2>/dev/null || $(PYTHON_CMD) -c "import o
 # On Unix-like systems: supports DETACH variable
 #   - If DETACH is set, runs the script in detached mode and tails the log file
 #   - Else, runs the script normally
-ifeq ($(OS), Windows) # Windows
+ifeq ($(DETECTED_OS), Windows) # Windows
 RUN_AND_LOG = $(PYTHON) $(1)
 else
 RUN_AND_LOG = \ # Unix-like
@@ -68,6 +73,11 @@ run: rename
 
 reports: report subtitle_report
 
+auto: dependencies
+	$(ENSURE_LOG_DIR)
+	$(CLEAR_CMD)
+	$(call RUN_AND_LOG, ./auto_track_metadata_renamer.py)
+
 report: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
@@ -81,7 +91,7 @@ subtitle_report: dependencies
 rename: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(call RUN_AND_LOG, ./audio_tracks_renamer.py)
+	$(call RUN_AND_LOG, ./track_metadata_renamer.py)
 
 rename_subtitles: dependencies
 	$(ENSURE_LOG_DIR)
@@ -108,4 +118,4 @@ clean:
 	find . -type f -name '*.pyc' -delete || del /S /Q *.pyc 2>nul
 	find . -type d -name '__pycache__' -delete || rmdir /S /Q __pycache__ 2>nul
 
-.PHONY: all install run reports report subtitle_report rename rename_subtitles clean dependencies generate_requirements
+.PHONY: all install run reports auto report subtitle_report rename rename_subtitles clean dependencies generate_requirements
