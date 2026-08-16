@@ -35,8 +35,14 @@ where ffprobe >nul 2>nul
 if errorlevel 1 call :InstallPackage "ffmpeg" "Gyan.FFmpeg" "ffmpeg"
 if errorlevel 1 exit /b 1
 
+set "MKVTOOLNIX_MISSING="
 where mkvpropedit >nul 2>nul
-if errorlevel 1 call :InstallPackage "mkvtoolnix" "MoritzBunkus.MKVToolNix" "mkvtoolnix"
+if errorlevel 1 set "MKVTOOLNIX_MISSING=1"
+where mkvmerge >nul 2>nul
+if errorlevel 1 set "MKVTOOLNIX_MISSING=1"
+where mkvextract >nul 2>nul
+if errorlevel 1 set "MKVTOOLNIX_MISSING=1"
+if defined MKVTOOLNIX_MISSING call :InstallPackage "mkvtoolnix" "MoritzBunkus.MKVToolNix" "mkvtoolnix"
 if errorlevel 1 exit /b 1
 
 call :RefreshMkvToolNixPath
@@ -68,6 +74,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
+where mkvextract >nul 2>nul
+if errorlevel 1 (
+    echo mkvextract could not be resolved after installation.
+    exit /b 1
+)
+
 ffmpeg -version >nul 2>nul
 if errorlevel 1 exit /b 1
 
@@ -78,6 +90,9 @@ mkvpropedit --version >nul 2>nul
 if errorlevel 1 exit /b 1
 
 mkvmerge --version >nul 2>nul
+if errorlevel 1 exit /b 1
+
+mkvextract --version >nul 2>nul
 if errorlevel 1 exit /b 1
 
 echo Installation complete.
