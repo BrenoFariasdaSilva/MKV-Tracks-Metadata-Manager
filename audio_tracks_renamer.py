@@ -1,5 +1,5 @@
 """
-Rename Matroska audio-track name metadata from an editable report.
+Rename Matroska video and audio track name metadata safely.
 """
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
@@ -9,8 +9,8 @@ from pathlib import Path  # Represent filesystem paths.
 from typing import Any  # Type dynamic JSON data.
 import json  # Read report JSON.
 
-from mkvpropedit_wrapper import AudioTrackRename, MkvpropeditResult, apply_audio_track_renames, valid_target_name  # Apply mkvpropedit edits.
-from report import INPUT_DIR, REPORT_PATH, SUPPORTED_EXTENSIONS, parse_group_key, parse_occurrence_key, raw_track_name, read_audio_tracks  # Reuse report parsing and metadata inspection.
+from mkvpropedit_wrapper import MkvpropeditResult, TrackNameEdit, apply_track_name_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
+from report import INPUT_DIR, REPORT_PATH, SUPPORTED_EXTENSIONS, discover_supported_files, parse_group_key, parse_occurrence_key, raw_track_name, read_audio_tracks, read_video_tracks  # Reuse report parsing and metadata inspection.
 
 
 @dataclass
@@ -141,9 +141,58 @@ def group_plans_by_file(plans: list[PlannedRename]) -> dict[Path, list[PlannedRe
     return grouped_plans  # Return grouped plans.
 
 
-def validate_plans_for_file(file_path: Path, plans: list[PlannedRename], input_dir: Path, summary: RenameSummary) -> list[AudioTrackRename]:
+def validate_video_plan_for_file(file_path: Path, input_dir: Path, summary: RenameSummary) -> TrackNameEdit | None:
     """
-    Validate planned renames against current file metadata.
+    Validate deterministic video-track naming against current file metadata.
+
+    :param file_path: Media file path.
+    :param input_dir: Input directory path.
+    :param summary: Mutable workflow summary.
+    :return: mkvpropedit video name operation or None.
+    """
+
+    if not file_path.exists():  # Verify media file still exists.
+        summary.messages.append(f"Missing file for video name: {file_path}")  # Store failure reason.
+        return None  # Return no operation.
+    if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:  # Verify file remains Matroska video.
+        summary.messages.append(f"Unsupported container skipped for video name: {file_path}")  # Store skip reason.
+        return None  # Return no operation.
+
+    try:  # Read current video metadata.
+        current_tracks = read_video_tracks(file_path, input_dir)  # Inspect current video metadata.
+    except Exception as error:  # Handle corrupt or unreadable file.
+        summary.failed += 1  # Count inspection failure.
+        summary.messages.append(f"Video metadata read failed for {file_path}: {error}")  # Store failure reason.
+        return None  # Return no operation.
+
+    if len(current_tracks) == 0:  # Verify a targetable video track exists.
+        summary.skipped += 1  # Count no-video skip.
+        summary.messages.append(f"No video track found: {file_path}")  # Store skip reason.
+        return None  # Return no operation.
+    if len(current_tracks) > 1:  # Verify ordinary single-video layout.
+        summary.skipped += 1  # Count ambiguous-video skip.
+        summary.messages.append(f"Multiple video tracks skipped: {file_path}")  # Store skip reason.
+        return None  # Return no operation.
+
+    current_track = current_tracks[0]  # Read the single video track.
+    target_name = valid_target_name(file_path.stem)  # Resolve filename stem target.
+    if target_name == "":  # Verify filename stem can become a track name.
+        summary.skipped += 1  # Count empty-target skip.
+        summary.messages.append(f"Empty video target skipped: {file_path}")  # Store skip reason.
+        return None  # Return no operation.
+    if current_track.current_name == target_name:  # Verify target already applied.
+        summary.skipped += 1  # Count no-op skip.
+        summary.messages.append(f"Already named {target_name}: {current_track.relative_path} video 1")  # Store skip reason.
+        return None  # Return no operation.
+
+    track_selector = build_track_selector("v", current_track.video_position, current_track.track_uid)  # Prefer Matroska Track UID selector when available.
+    summary.planned += 1  # Count validated video edit.
+    return TrackNameEdit(track_selector, current_track.current_name, target_name)  # Return validated operation.
+
+
+def validate_audio_plans_for_file(file_path: Path, plans: list[PlannedRename], input_dir: Path, summary: RenameSummary) -> list[TrackNameEdit]:
+    """
+    Validate planned audio renames against current file metadata.
 
     :param file_path: Media file path.
     :param plans: Planned renames for the file.
@@ -168,7 +217,7 @@ def validate_plans_for_file(file_path: Path, plans: list[PlannedRename], input_d
         summary.messages.append(f"Metadata read failed for {file_path}: {error}")  # Store failure reason.
         return []  # Return no operations.
 
-    operations: list[AudioTrackRename] = []  # Store validated mkvpropedit operations.
+    operations: list[TrackNameEdit] = []  # Store validated mkvpropedit operations.
     for plan in sorted(plans, key=lambda item: item.audio_position):  # Iterate plans by audio position.
         if plan.audio_position >= len(current_tracks):  # Verify track ordinal still exists.
             summary.failed += 1  # Count missing-track failure.
@@ -193,10 +242,25 @@ def validate_plans_for_file(file_path: Path, plans: list[PlannedRename], input_d
             summary.messages.append(f"Current name mismatch in {plan.relative_path} audio {plan.audio_position + 1}: report={plan.current_name!r}, file={current_track.current_name!r}")  # Store failure reason.
             continue  # Skip stale occurrence.
 
-        operations.append(AudioTrackRename(plan.audio_position, current_track.current_name, plan.target_name, current_track.track_uid))  # Store validated operation.
+        track_selector = build_track_selector("a", plan.audio_position, current_track.track_uid)  # Prefer Matroska Track UID selector when available.
+        operations.append(TrackNameEdit(track_selector, current_track.current_name, plan.target_name))  # Store validated operation.
         summary.planned += 1  # Count validated edit.
 
     return operations  # Return validated operations.
+
+
+def collect_candidate_files(grouped_plans: dict[Path, list[PlannedRename]], input_dir: Path) -> list[Path]:
+    """
+    Collect files eligible for video or audio name edits.
+
+    :param grouped_plans: Planned audio renames keyed by file path.
+    :param input_dir: Input directory path.
+    :return: Candidate file paths.
+    """
+
+    candidate_paths = set(discover_supported_files(input_dir))  # Collect current Matroska files for deterministic video naming.
+    candidate_paths.update(grouped_plans)  # Include report files that may need audio validation.
+    return sorted(candidate_paths, key=lambda path: path.as_posix().lower())  # Return deterministic file order.
 
 
 def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], input_dir: Path, summary: RenameSummary) -> list[MkvpropeditResult]:
@@ -210,22 +274,29 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], input_
     """
 
     results: list[MkvpropeditResult] = []  # Store mkvpropedit results.
-    for file_path in sorted(grouped_plans, key=lambda path: path.as_posix().lower()):  # Iterate files deterministically.
-        operations = validate_plans_for_file(file_path, grouped_plans[file_path], input_dir, summary)  # Validate operations against current metadata.
+    candidate_files = collect_candidate_files(grouped_plans, input_dir)  # Collect video and audio candidate files.
+    current_supported_files = {path for path in candidate_files if path.exists() and path.suffix.lower() in SUPPORTED_EXTENSIONS}  # Collect current files for video naming eligibility.
+    for file_path in candidate_files:  # Iterate files deterministically.
+        operations: list[TrackNameEdit] = []  # Store combined file operations.
+        video_operation = validate_video_plan_for_file(file_path, input_dir, summary) if file_path in current_supported_files else None  # Validate deterministic video operation.
+        if video_operation is not None:  # Verify video operation exists.
+            operations.append(video_operation)  # Add video operation first.
+        if file_path in grouped_plans:  # Verify report has audio plans for this file.
+            operations.extend(validate_audio_plans_for_file(file_path, grouped_plans[file_path], input_dir, summary))  # Add validated audio operations.
         if not operations:  # Verify file has operations after validation.
             continue  # Skip files without edits.
 
-        result = apply_audio_track_renames(file_path, operations)  # Apply mkvpropedit edits.
+        result = apply_track_name_edits(file_path, operations)  # Apply mkvpropedit edits.
         results.append(result)  # Store command result.
         if result.success and result.warning:  # Verify mkvpropedit completed with warnings.
             summary.changed += result.changed_count  # Count changes because MKVToolNix continued after warnings.
             summary.warnings += 1  # Count warning-bearing file.
             warning_text = (result.stderr or result.stdout).strip()  # Resolve warning output text.
             summary.messages.append(f"mkvpropedit warning for {file_path}: {warning_text}")  # Store warning reason.
-            print(f"Renamed {result.changed_count} audio track(s) with warning: {file_path}")  # Report warning completion.
+            print(f"Renamed {result.changed_count} track name(s) with warning: {file_path}")  # Report warning completion.
         elif result.success:  # Verify mkvpropedit succeeded cleanly.
             summary.changed += result.changed_count  # Count successful changes.
-            print(f"Renamed {result.changed_count} audio track(s): {file_path}")  # Report file success.
+            print(f"Renamed {result.changed_count} track name(s): {file_path}")  # Report file success.
         else:  # Handle mkvpropedit failure.
             summary.failed += result.changed_count  # Count failed changes.
             summary.messages.append(f"mkvpropedit failed for {file_path}: {result.stderr.strip()}")  # Store failure reason.
@@ -236,7 +307,7 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], input_
 
 def rename_audio_tracks(input_dir: str = INPUT_DIR, report_path: Path = REPORT_PATH) -> RenameSummary:
     """
-    Rename audio-track metadata according to report.json.
+    Rename deterministic video names and report-driven audio names.
 
     :param input_dir: Input directory path string.
     :param report_path: Report JSON path.
@@ -268,7 +339,7 @@ def rename_audio_tracks(input_dir: str = INPUT_DIR, report_path: Path = REPORT_P
 
 def main() -> None:
     """
-    Run audio-track metadata renaming from report.json.
+    Run track-name metadata renaming from report.json.
 
     :return: None.
     """
