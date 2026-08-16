@@ -12,6 +12,7 @@ import re  # Parse existing report group keys.
 import subprocess  # Run ffprobe safely with argument lists.
 import tempfile  # Create temporary files for safe report writes.
 from typing import Any  # Type dynamic ffprobe JSON values.
+from tqdm import tqdm  # Display report-generation progress.
 
 from audio_language_detector import detect_audio_track_language  # Resolve metadata or sampled audio language.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
@@ -384,11 +385,14 @@ def collect_audio_tracks(input_dir: Path) -> list[AudioTrackRecord]:
     """
 
     tracks: list[AudioTrackRecord] = []  # Store all discovered audio tracks.
-    for file_path in discover_supported_files(input_dir):  # Iterate supported Matroska files.
-        try:  # Inspect one file without stopping the full report.
-            tracks.extend(read_audio_tracks(file_path, input_dir, True))  # Add audio records with language detection.
-        except Exception as error:  # Handle unexpected per-file failures.
-            print(f"Skipping {file_path}: {error}")  # Report skipped corrupt or unreadable file.
+    supported_files = discover_supported_files(input_dir)  # Discover supported Matroska files once.
+    with tqdm(supported_files, desc="Processing MKV", unit="file") as progress_bar:  # Build cleanup-managed progress bar.
+        for file_path in progress_bar:  # Iterate supported Matroska files with progress.
+            progress_bar.set_description(f"Processing: {file_path.name}")  # Show current MKV filename.
+            try:  # Inspect one file without stopping the full report.
+                tracks.extend(read_audio_tracks(file_path, input_dir, True))  # Add audio records with language detection.
+            except Exception as error:  # Handle unexpected per-file failures.
+                print(f"Skipping {file_path}: {error}")  # Report skipped corrupt or unreadable file.
 
     return tracks  # Return collected track records.
 
