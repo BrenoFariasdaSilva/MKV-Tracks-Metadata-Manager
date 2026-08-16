@@ -1,6 +1,8 @@
 # Variables
 VENV := venv
 ARGS ?=
+REPORT_ARGS ?=
+RENAME_ARGS ?=
 INPUT_DIR ?=
 AUDIO_REPORT ?=
 SUBTITLE_REPORT ?=
@@ -45,19 +47,22 @@ endif
 
 # Logs directory
 LOG_DIR := ./Logs
-CLI_ARGS := $(ARGS)
+COMMON_CLI_ARGS :=
 ifneq ($(strip $(INPUT_DIR)),)
-CLI_ARGS += --input-dir "$(INPUT_DIR)"
+COMMON_CLI_ARGS += --input-dir "$(INPUT_DIR)"
 endif
 ifneq ($(strip $(AUDIO_REPORT)),)
-CLI_ARGS += --audio-report "$(AUDIO_REPORT)"
+COMMON_CLI_ARGS += --audio-report "$(AUDIO_REPORT)"
 endif
 ifneq ($(strip $(SUBTITLE_REPORT)),)
-CLI_ARGS += --subtitle-report "$(SUBTITLE_REPORT)"
+COMMON_CLI_ARGS += --subtitle-report "$(SUBTITLE_REPORT)"
 endif
 ifneq ($(strip $(FILE)),)
-CLI_ARGS += --file "$(FILE)"
+COMMON_CLI_ARGS += --file "$(FILE)"
 endif
+CLI_ARGS := $(ARGS) $(COMMON_CLI_ARGS)
+REPORT_CLI_ARGS := $(REPORT_ARGS) $(COMMON_CLI_ARGS)
+RENAME_CLI_ARGS := $(RENAME_ARGS) $(COMMON_CLI_ARGS)
 
 # Ensure logs directory exists (cross-platform)
 ENSURE_LOG_DIR := @mkdir -p $(LOG_DIR) 2>/dev/null || $(PYTHON_CMD) -c "import os; os.makedirs('$(LOG_DIR)', exist_ok=True)"
@@ -89,11 +94,10 @@ help:
 	@echo "  make install"
 	@echo "  make report ARGS=\"--audio\" or ARGS=\"--subtitles\""
 	@echo "  make rename ARGS=\"--video --audio\" or ARGS=\"--subtitles\""
-	@echo "  make process ARGS=\"--video --audio\" sets English audio default"
-	@echo "  make process ARGS=\"--video --audio --subtitles\" sets English audio default"
-	@echo "  make process ARGS=\"--video --audio --default-audio-language Portuguese\""
-	@echo "  make process ARGS=\"--video --audio --no-set-default-audio\""
-	@echo "  make process ARGS=\"--video --audio\" INPUT_DIR=\"E:/Movies/Test Folder\""
+	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio\""
+	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio --set-default-audio\""
+	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles\""
+	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio\" INPUT_DIR=\"E:/Movies/Test Folder\""
 	@echo "  make process-audio-video"
 	@echo "  make process-all"
 
@@ -110,15 +114,16 @@ reports: dependencies
 process: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(call RUN_AND_LOG, ./auto_track_metadata_renamer.py $(CLI_ARGS))
+	$(PYTHON) ./report.py $(REPORT_CLI_ARGS)
+	$(PYTHON) ./track_metadata_renamer.py $(RENAME_CLI_ARGS)
 
 auto: process
 
 process-audio-video:
-	$(MAKE) process ARGS="--video --audio"
+	$(MAKE) process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio"
 
 process-all:
-	$(MAKE) process ARGS="--video --audio --subtitles"
+	$(MAKE) process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles"
 
 report: dependencies
 	$(ENSURE_LOG_DIR)
