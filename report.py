@@ -1,406 +1,493 @@
 """
-================================================================================
-<PROJECT OR SCRIPT TITLE>
-================================================================================
-Author      : Breno Farias da Silva
-Created     : <YYYY-MM-DD>
-Description :
-    <Provide a concise and complete overview of what this script does.>
-    <Mention its purpose, scope, and relevance to the larger project.>
-
-    Key features include:
-        - <Feature 1 — e.g., automatic data loading and preprocessing>
-        - <Feature 2 — e.g., model training and evaluation>
-        - <Feature 3 — e.g., visualization or report generation>
-        - <Feature 4 — e.g., logging or notification system>
-        - <Feature 5 — e.g., integration with other modules or datasets>
-
-Usage:
-    1. <Explain any configuration steps before running, such as editing variables or paths.>
-    2. <Describe how to execute the script — typically via Makefile or Python.>
-        $ make <target>   or   $ python <script_name>.py
-    3. <List what outputs are expected or where results are saved.>
-
-Outputs:
-    - <Output file or directory 1 — e.g., results.csv>
-    - <Output file or directory 2 — e.g., Feature_Analysis/plots/>
-    - <Output file or directory 3 — e.g., logs/output.txt>
-
-TODOs:
-    - <Add a task or improvement — e.g., implement CLI argument parsing.>
-    - <Add another improvement — e.g., extend support to Parquet files.>
-    - <Add optimization — e.g., parallelize evaluation loop.>
-    - <Add robustness — e.g., error handling or data validation.>
-
-Dependencies:
-    - Python >= <version>
-    - <Library 1 — e.g., pandas>
-    - <Library 2 — e.g., numpy>
-    - <Library 3 — e.g., scikit-learn>
-    - <Library 4 — e.g., matplotlib, seaborn, tqdm, colorama>
-
-Assumptions & Notes:
-    - <List any key assumptions — e.g., last column is the target variable.>
-    - <Mention data format — e.g., CSV files only.>
-    - <Mention platform or OS-specific notes — e.g., sound disabled on Windows.>
-    - <Note on output structure or reusability.>
+Generate an editable audio-track rename report for Matroska video files.
 """
 
-import atexit  # For playing a sound when the program finishes
-import datetime  # For getting the current date and time
-import os  # For running a command in the terminal
-import platform  # For getting the operating system name
-import sys  # For system-specific parameters and functions
-from colorama import Style  # For coloring the terminal
-from pathlib import Path  # For handling file paths
+from __future__ import annotations  # Enable modern annotations on older supported Python versions.
+
+from dataclasses import dataclass  # Define compact typed records.
+import json  # Read and write report JSON.
+import os  # Replace completed report files atomically.
+from pathlib import Path  # Represent filesystem paths.
+import re  # Parse existing report group keys.
+import subprocess  # Run ffprobe safely with argument lists.
+import tempfile  # Create temporary files for safe report writes.
+from typing import Any  # Type dynamic ffprobe JSON values.
+
+from audio_language_detector import detect_audio_track_language  # Resolve metadata or sampled audio language.
+from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
 
 
-# Macros:
-class BackgroundColors:  # Colors for the terminal
-    CYAN = "\033[96m"  # Cyan
-    GREEN = "\033[92m"  # Green
-    YELLOW = "\033[93m"  # Yellow
-    RED = "\033[91m"  # Red
-    BOLD = "\033[1m"  # Bold
-    UNDERLINE = "\033[4m"  # Underline
-    CLEAR_TERMINAL = "\033[H\033[J"  # Clear the terminal
+INPUT_DIR = "E:/Movies/"  # Store default recursive input directory.
+REPORT_PATH = Path(__file__).with_name("report.json")  # Store report output beside this script.
+SUPPORTED_EXTENSIONS = (".mkv", ".mk3d")  # Limit edits to Matroska video containers supported by mkvpropedit.
+MISSING_TRACK_NAME = "<missing audio track name>"  # Display unnamed tracks without colliding with empty JSON keys.
+ESCAPED_TRACK_NAME_PREFIX = "\\"  # Escape literal marker-like track names in report group keys.
+OCCURRENCE_SUFFIX_PATTERN = re.compile(r"^(?P<path>.+) \[audio:(?P<audio>\d+)(?: track-id:(?P<track_id>[^\s\]]+))?(?: uid:(?P<uid>[^\]]+))?(?: stream:(?P<stream>[^\]]+))?\]$")  # Parse occurrence keys.
+GROUP_KEY_PATTERN = re.compile(r"^(?P<name>.*) \((?P<count>\d+)\)$")  # Parse grouped current-name keys.
 
 
-# Execution Constants:
-VERBOSE = False  # Set to True to output verbose messages
-
-# Sound Constants:
-SOUND_COMMANDS = {
-    "Darwin": "afplay",
-    "Linux": "aplay",
-    "Windows": "start",
-}  # The commands to play a sound for each operating system
-SOUND_FILE = "./.assets/Sounds/NotificationSound.wav"  # The path to the sound file
-
-# RUN_FUNCTIONS:
-RUN_FUNCTIONS = {
-    "Play Sound": True,  # Set to True to play a sound when the program finishes
-}
-
-# Functions Definitions:
-
-
-def verbose_output(true_string="", false_string=""):
+@dataclass(frozen=True)
+class AudioTrackRecord:
     """
-    Outputs a message if the VERBOSE constant is set to True.
-
-    :param true_string: The string to be outputted if the VERBOSE constant is set to True.
-    :param false_string: The string to be outputted if the VERBOSE constant is set to False.
-    :return: None
+    Stores one audio-track occurrence from one media file.
     """
 
-    if VERBOSE and true_string != "":  # If VERBOSE is True and a true_string was provided
-        print(true_string)  # Output the true statement string
-    elif false_string != "":  # If a false_string was provided
-        print(false_string)  # Output the false statement string
+    file_path: Path  # Store absolute file path.
+    relative_path: str  # Store path relative to INPUT_DIR.
+    audio_position: int  # Store zero-based audio stream position.
+    stream_index: int | None  # Store MKVToolNix track ID.
+    track_uid: int | None  # Store Matroska track UID.
+    current_name: str  # Store current audio track name metadata.
+    detected_language: str  # Store detected canonical language or empty text.
 
 
-def resolve_entry_with_trailing_space(current_path: str, entry: str, stripped_part: str) -> str:
+def display_track_name(track_name: str) -> str:
     """
-    Resolve and optionally rename a directory entry with trailing spaces.
+    Convert a raw track name into a stable report display value.
 
-    :param current_path: Current directory path.
-    :param entry: Directory entry name.
-    :param stripped_part: Normalized target name without surrounding spaces.
-    :return: Resolved path after optional rename.
-    """
-
-    try:  # Wrap full function logic to ensure safe execution
-        resolved = os.path.join(current_path, entry)  # Build resolved path
-
-        if entry != stripped_part:  # Verify trailing spaces exist
-            corrected = os.path.join(current_path, stripped_part)  # Build corrected path
-            try:  # Attempt to rename entry
-                os.rename(resolved, corrected)  # Rename entry to stripped version
-                verbose_output(true_string=f"{BackgroundColors.GREEN}Renamed: {BackgroundColors.CYAN}{resolved}{BackgroundColors.GREEN} -> {BackgroundColors.CYAN}{corrected}{Style.RESET_ALL}")  # Log rename
-                resolved = corrected  # Update resolved path after rename
-            except Exception:  # Handle rename failure
-                verbose_output(true_string=f"{BackgroundColors.RED}Failed to rename: {BackgroundColors.CYAN}{resolved}{Style.RESET_ALL}")  # Log failure
-
-        return resolved  # Return resolved path
-    except Exception:  # Catch unexpected errors
-        return os.path.join(current_path, entry)  # Return fallback resolved path
-
-
-def resolve_full_trailing_space_path(filepath: str) -> str:
-    """
-    Resolve trailing space issues across all path components.
-
-    :param filepath: Path to resolve potential trailing space mismatches.
-    :return: Corrected full path if matches are found, otherwise original filepath.
+    :param track_name: Raw audio-track name.
+    :return: Report display value.
     """
 
-    try:  # Wrap full function logic to ensure safe execution
-        verbose_output(true_string=f"{BackgroundColors.GREEN}Resolving full trailing space path for: {BackgroundColors.CYAN}{filepath}{Style.RESET_ALL}")  # Log start
-
-        if not isinstance(filepath, str) or not filepath:  # Verify filepath validity
-            verbose_output(true_string=f"{BackgroundColors.YELLOW}Invalid filepath provided, skipping resolution.{Style.RESET_ALL}")  # Log invalid input
-            return filepath  # Return original
-
-        filepath = os.path.expanduser(filepath)  # Expand ~ to user directory
-        parts = filepath.split(os.sep)  # Split path into components
-
-        if not parts:  # Verify path parts exist
-            return filepath  # Return original
-
-        if filepath.startswith(os.sep):  # Handle absolute paths
-            current_path = os.sep  # Start from root
-            parts = parts[1:]  # Remove empty root part
-        else:
-            current_path = parts[0] if parts[0] else os.getcwd()  # Initialize base
-            parts = parts[1:] if parts[0] else parts  # Adjust parts
-
-        for part in parts:  # Iterate over each path component
-            if part == "":  # Skip empty parts
-                continue  # Continue iteration
-
-            try:  # Attempt to list current directory
-                entries = os.listdir(current_path) if os.path.isdir(current_path) else []  # List current directory entries
-            except Exception:  # Handle failure to list directory contents
-                verbose_output(true_string=f"{BackgroundColors.RED}Failed to list directory: {BackgroundColors.CYAN}{current_path}{Style.RESET_ALL}")  # Log failure
-                return filepath  # Return original
-
-            stripped_part = part.strip()  # Normalize current part
-            match_found = False  # Initialize match flag
-
-            for entry in entries:  # Iterate directory entries
-                try:  # Attempt safe comparison for each entry
-                    if entry.strip() == stripped_part:  # Compare stripped names
-                        current_path = resolve_entry_with_trailing_space(current_path, entry, stripped_part)  # Resolve entry and update current path
-                        match_found = True  # Mark match
-                        break  # Stop searching
-                except Exception:  # Handle any unexpected error during comparison
-                    continue  # Continue on error
-
-            if not match_found:  # If no match found for this segment
-                verbose_output(true_string=f"{BackgroundColors.YELLOW}No match for segment: {BackgroundColors.CYAN}{part}{Style.RESET_ALL}")  # Log miss
-                return filepath  # Return original
-
-        return current_path  # Return fully resolved path
-
-    except Exception:  # Catch unexpected errors to maintain stability
-        verbose_output(true_string=f"{BackgroundColors.RED}Error resolving full path: {BackgroundColors.CYAN}{filepath}{Style.RESET_ALL}")  # Log error
-        return filepath  # Return original
+    normalized_name = track_name.strip()  # Normalize surrounding whitespace.
+    if normalized_name == "":  # Verify whether the track name is missing.
+        return MISSING_TRACK_NAME  # Return explicit missing-name marker.
+    if normalized_name == MISSING_TRACK_NAME or normalized_name.startswith(ESCAPED_TRACK_NAME_PREFIX):  # Verify whether the visible name needs escaping.
+        return f"{ESCAPED_TRACK_NAME_PREFIX}{normalized_name}"  # Return escaped visible track name.
+    return normalized_name  # Return visible track name.
 
 
-def verify_filepath_exists(filepath):
+def raw_track_name(display_name: str) -> str:
     """
-    Verify if a file or folder exists at the specified path.
+    Convert a report display value back into a raw track name.
 
-    :param filepath: Path to the file or folder
-    :return: True if the file or folder exists, False otherwise
+    :param display_name: Report display value.
+    :return: Raw audio-track name.
     """
 
-    try:  # Wrap full function logic to ensure production-safe monitoring
-        verbose_output(
-            f"{BackgroundColors.GREEN}Verifying if the file or folder exists at the path: {BackgroundColors.CYAN}{filepath}{Style.RESET_ALL}"
-        )  # Output the verbose message
-        
-        if not isinstance(filepath, str) or not filepath.strip():  # Verify for non-string or empty/whitespace-only input   
-            verbose_output(true_string=f"{BackgroundColors.YELLOW}Invalid filepath provided, skipping existence verification.{Style.RESET_ALL}")  # Log invalid input
-            return False  # Return False for invalid input
-
-        if os.path.exists(filepath):  # Fast path: original input exists
-            return True  # Return True immediately
-
-        candidate = str(filepath).strip()  # Normalize input to string and strip surrounding whitespace
-
-        if (candidate.startswith("'") and candidate.endswith("'")) or (
-            candidate.startswith('"') and candidate.endswith('"')
-        ):  # Handle quoted paths from config files
-            candidate = candidate[1:-1].strip()  # Remove wrapping quotes and trim again
-
-        candidate = os.path.expanduser(candidate)  # Expand ~ to user home directory
-        candidate = os.path.normpath(candidate)  # Normalize path separators and structure
-
-        if os.path.exists(candidate):  # Verify normalized candidate directly
-            return True  # Return True if normalized path exists
-
-        repo_dir = os.path.dirname(os.path.abspath(__file__))  # Resolve repository directory
-        cwd = os.getcwd()  # Capture current working directory
-
-        alt = candidate.lstrip(os.sep) if candidate.startswith(os.sep) else candidate  # Prepare relative-safe path
-
-        repo_candidate = os.path.join(repo_dir, alt)  # Build repo-relative candidate
-        cwd_candidate = os.path.join(cwd, alt)  # Build cwd-relative candidate
-
-        for path_variant in (repo_candidate, cwd_candidate):  # Iterate alternative base paths
-            try:
-                normalized_variant = os.path.normpath(path_variant)  # Normalize variant
-                if os.path.exists(normalized_variant):  # Verify existence
-                    return True  # Return True if found
-            except Exception:
-                continue  # Continue safely on error
-
-        try:  # Attempt absolute path resolution as fallback
-            abs_candidate = os.path.abspath(candidate)  # Build absolute path
-            if os.path.exists(abs_candidate):  # Verify existence
-                return True  # Return True if found
-        except Exception:
-            pass  # Ignore resolution errors
-
-        for path_variant in (candidate, repo_candidate, cwd_candidate):  # Attempt trailing-space resolution on all variants
-            try:  # Attempt to resolve trailing space issues across path components for this variant
-                resolved = resolve_full_trailing_space_path(path_variant)  # Resolve trailing space issues across path components
-                if resolved != path_variant and os.path.exists(resolved):  # Verify resolved path exists
-                    verbose_output(
-                        f"{BackgroundColors.YELLOW}Resolved trailing space mismatch: {BackgroundColors.CYAN}{path_variant}{BackgroundColors.YELLOW} -> {BackgroundColors.CYAN}{resolved}{Style.RESET_ALL}"
-                    )  # Log successful resolution
-                    return True  # Return True if corrected path exists
-            except Exception:  # Catch any exception during trailing space resolution   
-                continue  # Continue safely on error
-
-        return False  # Not found after all resolution strategies
-    except Exception as e:  # Catch any exception to ensure logging and Telegram alert
-        print(str(e))  # Print error to terminal for server logs
-        raise  # Re-raise to preserve original failure semantics
+    if display_name == MISSING_TRACK_NAME:  # Verify whether report value means an empty track name.
+        return ""  # Return empty track name.
+    if display_name.startswith(ESCAPED_TRACK_NAME_PREFIX):  # Verify whether report value was escaped.
+        return display_name[1:]  # Return unescaped track name.
+    return display_name  # Return regular display value.
 
 
-def to_seconds(obj):
+def parse_group_key(group_key: str) -> tuple[str, int | None]:
     """
-    Converts various time-like objects to seconds.
-    
-    :param obj: The object to convert (can be int, float, timedelta, datetime, etc.)
-    :return: The equivalent time in seconds as a float, or None if conversion fails
-    """
-    
-    if obj is None:  # None can't be converted
-        return None  # Signal failure to convert
-    if isinstance(obj, (int, float)):  # Already numeric (seconds or timestamp)
-        return float(obj)  # Return as float seconds
-    if hasattr(obj, "total_seconds"):  # Timedelta-like objects
-        try:  # Attempt to call total_seconds()
-            return float(obj.total_seconds())  # Use the total_seconds() method
-        except Exception:
-            pass  # Fallthrough on error
-    if hasattr(obj, "timestamp"):  # Datetime-like objects
-        try:  # Attempt to call timestamp()
-            return float(obj.timestamp())  # Use timestamp() to get seconds since epoch
-        except Exception:
-            pass  # Fallthrough on error
-    return None  # Couldn't convert
+    Parse a grouped report key into display name and occurrence count.
 
-
-def calculate_execution_time(start_time, finish_time=None):
-    """
-    Calculates the execution time and returns a human-readable string.
-
-    Accepts either:
-    - Two datetimes/timedeltas: `calculate_execution_time(start, finish)`
-    - A single timedelta or numeric seconds: `calculate_execution_time(delta)`
-    - Two numeric timestamps (seconds): `calculate_execution_time(start_s, finish_s)`
-
-    Returns a string like "1h 2m 3s".
+    :param group_key: Report group key.
+    :return: Display name and parsed count when available.
     """
 
-    if finish_time is None:  # Single-argument mode: start_time already represents duration or seconds
-        total_seconds = to_seconds(start_time)  # Try to convert provided value to seconds
-        if total_seconds is None:  # Conversion failed
-            try:  # Attempt numeric coercion
-                total_seconds = float(start_time)  # Attempt numeric coercion
-            except Exception:
-                total_seconds = 0.0  # Fallback to zero
-    else:  # Two-argument mode: Compute difference finish_time - start_time
-        st = to_seconds(start_time)  # Convert start to seconds if possible
-        ft = to_seconds(finish_time)  # Convert finish to seconds if possible
-        if st is not None and ft is not None:  # Both converted successfully
-            total_seconds = ft - st  # Direct numeric subtraction
-        else:  # Fallback to other methods
-            try:  # Attempt to subtract (works for datetimes/timedeltas)
-                delta = finish_time - start_time  # Try subtracting (works for datetimes/timedeltas)
-                total_seconds = float(delta.total_seconds())  # Get seconds from the resulting timedelta
-            except Exception:  # Subtraction failed
-                try:  # Final attempt: Numeric coercion
-                    total_seconds = float(finish_time) - float(start_time)  # Final numeric coercion attempt
-                except Exception:  # Numeric coercion failed
-                    total_seconds = 0.0  # Fallback to zero on failure
-
-    if total_seconds is None:  # Ensure a numeric value
-        total_seconds = 0.0  # Default to zero
-    if total_seconds < 0:  # Normalize negative durations
-        total_seconds = abs(total_seconds)  # Use absolute value
-
-    days = int(total_seconds // 86400)  # Compute full days
-    hours = int((total_seconds % 86400) // 3600)  # Compute remaining hours
-    minutes = int((total_seconds % 3600) // 60)  # Compute remaining minutes
-    seconds = int(total_seconds % 60)  # Compute remaining seconds
-
-    if days > 0:  # Include days when present
-        return f"{days}d {hours}h {minutes}m {seconds}s"  # Return formatted days+hours+minutes+seconds
-    if hours > 0:  # Include hours when present
-        return f"{hours}h {minutes}m {seconds}s"  # Return formatted hours+minutes+seconds
-    if minutes > 0:  # Include minutes when present
-        return f"{minutes}m {seconds}s"  # Return formatted minutes+seconds
-    return f"{seconds}s"  # Fallback: only seconds
+    match = GROUP_KEY_PATTERN.match(group_key)  # Match trailing occurrence count.
+    if match is None:  # Verify whether the group key has expected form.
+        return group_key, None  # Return unparsed group key.
+    return match.group("name"), int(match.group("count"))  # Return parsed display name and count.
 
 
-def play_sound():
+def build_occurrence_key(track: AudioTrackRecord) -> str:
     """
-    Plays a sound when the program finishes and skips if the operating system is Windows.
+    Build a unique editable key for one audio-track occurrence.
 
-    :param: None
-    :return: None
+    :param track: Audio track occurrence.
+    :return: Unique occurrence key.
     """
 
-    current_os = platform.system()  # Get the current operating system
-    if current_os == "Windows":  # If the current operating system is Windows
-        return  # Do nothing
-
-    if verify_filepath_exists(SOUND_FILE):  # If the sound file exists
-        if current_os in SOUND_COMMANDS:  # If the platform.system() is in the SOUND_COMMANDS dictionary
-            os.system(f"{SOUND_COMMANDS[current_os]} {SOUND_FILE}")  # Play the sound
-        else:  # If the platform.system() is not in the SOUND_COMMANDS dictionary
-            print(
-                f"{BackgroundColors.RED}The {BackgroundColors.CYAN}{current_os}{BackgroundColors.RED} is not in the {BackgroundColors.CYAN}SOUND_COMMANDS dictionary{BackgroundColors.RED}. Please add it!{Style.RESET_ALL}"
-            )
-    else:  # If the sound file does not exist
-        print(
-            f"{BackgroundColors.RED}Sound file {BackgroundColors.CYAN}{SOUND_FILE}{BackgroundColors.RED} not found. Make sure the file exists.{Style.RESET_ALL}"
-        )
+    track_id_label = str(track.stream_index) if track.stream_index is not None else "unknown"  # Build MKVToolNix track ID label.
+    uid_label = str(track.track_uid) if track.track_uid is not None else "unknown"  # Build Matroska track UID label.
+    return f"{track.relative_path} [audio:{track.audio_position + 1} track-id:{track_id_label} uid:{uid_label}]"  # Return path plus exact track identity.
 
 
-def main():
+def parse_occurrence_key(occurrence_key: str) -> tuple[str, int, int | None, int | None] | None:
     """
-    Main function.
+    Parse a report occurrence key into relative path and zero-based audio position.
 
-    :param: None
-    :return: None
+    :param occurrence_key: Report occurrence key.
+    :return: Relative path, zero-based audio position, track ID, and track UID, or None.
     """
 
-    print(
-        f"{BackgroundColors.CLEAR_TERMINAL}{BackgroundColors.BOLD}{BackgroundColors.GREEN}Welcome to the {BackgroundColors.CYAN}Main Template Python{BackgroundColors.GREEN} program!{Style.RESET_ALL}",
-        end="\n\n",
-    )  # Output the welcome message
-    
-    start_time = datetime.datetime.now()  # Get the start time of the program
-    
-    # Implement logic here
-
-    finish_time = datetime.datetime.now()  # Get the finish time of the program
-    
-    print(
-        f"{BackgroundColors.GREEN}Start time: {BackgroundColors.CYAN}{start_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Finish time: {BackgroundColors.CYAN}{finish_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Execution time: {BackgroundColors.CYAN}{calculate_execution_time(start_time, finish_time)}{Style.RESET_ALL}"
-    )  # Output the start and finish times
-    
-    print(
-        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Program finished.{Style.RESET_ALL}"
-    )  # Output the end of the program message
-    
-    (
-        atexit.register(play_sound) if RUN_FUNCTIONS["Play Sound"] else None
-    )  # Register the play_sound function to be called when the program finishes
+    match = OCCURRENCE_SUFFIX_PATTERN.match(occurrence_key)  # Match occurrence suffix.
+    if match is None:  # Verify whether occurrence key has expected shape.
+        return None  # Return no parsed occurrence.
+    audio_position = int(match.group("audio")) - 1  # Convert one-based report ordinal to zero-based position.
+    if audio_position < 0:  # Verify parsed audio position is valid.
+        return None  # Return no parsed occurrence.
+    raw_track_id = match.group("track_id") or match.group("stream")  # Read current or legacy track ID label.
+    raw_uid = match.group("uid")  # Read Matroska track UID label.
+    track_id = int(raw_track_id) if raw_track_id is not None and raw_track_id.isdigit() else None  # Parse track ID when numeric.
+    track_uid = int(raw_uid) if raw_uid is not None and raw_uid.isdigit() else None  # Parse track UID when numeric.
+    return match.group("path"), audio_position, track_id, track_uid  # Return parsed occurrence identity.
 
 
-if __name__ == "__main__":
+def read_existing_desired_names(report_path: Path) -> dict[str, str]:
     """
-    This is the standard boilerplate that calls the main() function.
+    Read existing manually edited desired names by current track display name.
 
-    :return: None
+    :param report_path: Existing report path.
+    :return: Desired-name mapping keyed by track display name.
     """
 
-    main()  # Call the main function
+    if not report_path.exists():  # Verify whether an existing report is present.
+        return {}  # Return empty mapping.
+
+    try:  # Read and parse existing JSON report.
+        existing_data = json.loads(report_path.read_text(encoding="utf-8"))  # Load existing report JSON.
+    except (OSError, json.JSONDecodeError):  # Handle missing, unreadable, or malformed report content.
+        return {}  # Return empty mapping.
+
+    if not isinstance(existing_data, dict):  # Verify top-level report shape.
+        return {}  # Return empty mapping.
+
+    desired_names: dict[str, str] = {}  # Store safe desired-name values.
+    for group_key, group_value in existing_data.items():  # Iterate existing report groups.
+        if not isinstance(group_key, str) or not isinstance(group_value, dict):  # Verify group entry shape.
+            continue  # Skip malformed group.
+        display_name, parsed_count = parse_group_key(group_key)  # Parse current-name display key.
+        desired_value = group_value.get("desired_new_name")  # Read desired name field.
+        occurrence_count = len([key for key in group_value if key != "desired_new_name"])  # Count existing occurrences.
+        if parsed_count is not None and parsed_count != occurrence_count:  # Verify group count matches occurrence entries.
+            continue  # Skip unsafe stale group.
+        if isinstance(desired_value, str):  # Verify desired value is editable text.
+            desired_names[display_name] = desired_value  # Preserve user desired name.
+
+    return desired_names  # Return preserved desired names.
+
+
+def discover_supported_files(input_dir: Path) -> list[Path]:
+    """
+    Recursively discover supported Matroska video files.
+
+    :param input_dir: Input directory path.
+    :return: Sorted supported file paths.
+    """
+
+    if not input_dir.exists() or not input_dir.is_dir():  # Verify input directory can be scanned.
+        return []  # Return no files when input directory is unavailable.
+
+    supported_files: list[Path] = []  # Store discovered Matroska files.
+    for file_path in input_dir.rglob("*"):  # Walk every descendant path.
+        if not file_path.is_file():  # Verify path is a file.
+            continue  # Skip directories and special entries.
+        if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:  # Verify Matroska video extension.
+            continue  # Skip unsupported containers safely.
+        supported_files.append(file_path)  # Store supported file.
+
+    return sorted(supported_files, key=lambda path: path.as_posix().lower())  # Return deterministic file order.
+
+
+def probe_media(file_path: Path) -> dict[str, Any]:
+    """
+    Read ffprobe stream and format metadata for one media file.
+
+    :param file_path: Media file path.
+    :return: Parsed ffprobe metadata.
+    """
+
+    executable = find_executable("ffprobe") or "ffprobe"  # Locate ffprobe executable.
+    command = [executable, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(file_path)]  # Build ffprobe command.
+    try:  # Execute ffprobe safely.
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)  # Run ffprobe.
+    except OSError as error:  # Handle unavailable ffprobe or execution failure.
+        print(f"ffprobe unavailable for {file_path}: {error}")  # Report inspection failure.
+        return {"streams": [], "format": {}}  # Return empty metadata.
+
+    if result.returncode != 0:  # Verify ffprobe succeeded.
+        print(f"ffprobe failed for {file_path}: {result.stderr.strip()}")  # Report ffprobe error.
+        return {"streams": [], "format": {}}  # Return empty metadata.
+
+    try:  # Parse ffprobe JSON output.
+        parsed_data = json.loads(result.stdout) if result.stdout else {"streams": [], "format": {}}  # Decode JSON metadata.
+    except json.JSONDecodeError as error:  # Handle invalid ffprobe JSON.
+        print(f"ffprobe returned invalid JSON for {file_path}: {error}")  # Report parse failure.
+        return {"streams": [], "format": {}}  # Return empty metadata.
+
+    return parsed_data if isinstance(parsed_data, dict) else {"streams": [], "format": {}}  # Return object metadata.
+
+
+def probe_mkvmerge(file_path: Path) -> dict[str, Any]:
+    """
+    Read MKVToolNix track metadata for one Matroska file.
+
+    :param file_path: Matroska file path.
+    :return: Parsed mkvmerge metadata.
+    """
+
+    executable = find_executable("mkvmerge")  # Locate mkvmerge executable.
+    if executable is None:  # Verify mkvmerge is available.
+        print(f"mkvmerge unavailable for {file_path}: executable not found")  # Report missing mkvmerge.
+        return {"tracks": []}  # Return empty metadata.
+    command = [executable, "-J", str(file_path)]  # Build mkvmerge JSON command.
+    try:  # Execute mkvmerge safely.
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)  # Run mkvmerge.
+    except OSError as error:  # Handle unavailable mkvmerge or execution failure.
+        print(f"mkvmerge unavailable for {file_path}: {error}")  # Report inspection failure.
+        return {"tracks": []}  # Return empty metadata.
+
+    if result.returncode != 0:  # Verify mkvmerge inspection succeeded.
+        print(f"mkvmerge failed for {file_path}: {result.stderr.strip()}")  # Report mkvmerge error.
+        return {"tracks": []}  # Return empty metadata.
+
+    try:  # Parse mkvmerge JSON output.
+        parsed_data = json.loads(result.stdout) if result.stdout else {"tracks": []}  # Decode JSON metadata.
+    except json.JSONDecodeError as error:  # Handle invalid mkvmerge JSON.
+        print(f"mkvmerge returned invalid JSON for {file_path}: {error}")  # Report parse failure.
+        return {"tracks": []}  # Return empty metadata.
+
+    return parsed_data if isinstance(parsed_data, dict) else {"tracks": []}  # Return object metadata.
+
+
+def read_mkvmerge_audio_tracks(media_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Read audio tracks in MKVToolNix track order.
+
+    :param media_data: mkvmerge media metadata.
+    :return: Audio track metadata objects.
+    """
+
+    raw_tracks = media_data.get("tracks")  # Read raw mkvmerge tracks.
+    tracks = raw_tracks if isinstance(raw_tracks, list) else []  # Normalize track list.
+    audio_tracks: list[dict[str, Any]] = []  # Store audio track objects.
+    for raw_track in tracks:  # Iterate mkvmerge tracks in reported order.
+        if not isinstance(raw_track, dict):  # Verify track object shape.
+            continue  # Skip invalid track.
+        if raw_track.get("type") != "audio":  # Verify track is audio.
+            continue  # Skip non-audio track.
+        audio_tracks.append(raw_track)  # Store audio track.
+    return audio_tracks  # Return audio tracks in MKVToolNix order.
+
+
+def read_mkvmerge_properties(track: dict[str, Any]) -> dict[str, Any]:
+    """
+    Read mkvmerge track properties.
+
+    :param track: mkvmerge track metadata.
+    :return: Track properties object.
+    """
+
+    raw_properties = track.get("properties")  # Read raw properties.
+    return raw_properties if isinstance(raw_properties, dict) else {}  # Return object properties.
+
+
+def read_mkvmerge_track_name(track: dict[str, Any]) -> str:
+    """
+    Read current audio-track name from MKVToolNix metadata.
+
+    :param track: mkvmerge track metadata.
+    :return: Current audio-track name.
+    """
+
+    properties = read_mkvmerge_properties(track)  # Read track properties.
+    for key in ("track_name", "track_name_escaped"):  # Iterate known MKVToolNix name fields.
+        value = properties.get(key)  # Read candidate name.
+        if isinstance(value, str) and value.strip() != "":  # Verify candidate name is visible.
+            return value.strip()  # Return current track name.
+    return ""  # Return empty name when metadata is missing.
+
+
+def read_mkvmerge_track_id(track: dict[str, Any]) -> int | None:
+    """
+    Read MKVToolNix track ID from mkvmerge metadata.
+
+    :param track: mkvmerge track metadata.
+    :return: Track ID or None.
+    """
+
+    raw_id = track.get("id")  # Read mkvmerge track ID.
+    return raw_id if isinstance(raw_id, int) else None  # Return integer track ID.
+
+
+def read_mkvmerge_track_uid(track: dict[str, Any]) -> int | None:
+    """
+    Read Matroska track UID from mkvmerge metadata.
+
+    :param track: mkvmerge track metadata.
+    :return: Track UID or None.
+    """
+
+    properties = read_mkvmerge_properties(track)  # Read track properties.
+    raw_uid = properties.get("uid")  # Read Matroska track UID.
+    return raw_uid if isinstance(raw_uid, int) else None  # Return integer track UID.
+
+
+def build_language_metadata_stream(track: dict[str, Any]) -> dict[str, Any]:
+    """
+    Build language-detection metadata from mkvmerge track properties.
+
+    :param track: mkvmerge track metadata.
+    :return: Metadata object compatible with language detection.
+    """
+
+    properties = read_mkvmerge_properties(track)  # Read mkvmerge properties.
+    tags = {  # Build ffprobe-like tag mapping.
+        "language": properties.get("language"),  # Include Matroska language code.
+        "LANGUAGE": properties.get("language_ietf"),  # Include IETF language tag.
+        "title": properties.get("track_name"),  # Include track name as fallback.
+        "name": properties.get("track_name"),  # Include name alias as fallback.
+    }  # Complete metadata tag mapping.
+    return {"tags": {key: str(value) for key, value in tags.items() if value is not None}}  # Return detector-compatible metadata.
+
+
+def read_format_duration(media_data: dict[str, Any]) -> float:
+    """
+    Read usable media duration from ffprobe format metadata.
+
+    :param media_data: ffprobe media metadata.
+    :return: Duration in seconds, or zero.
+    """
+
+    raw_format = media_data.get("format")  # Read raw format object.
+    if not isinstance(raw_format, dict):  # Verify format object shape.
+        return 0.0  # Return unknown duration.
+    raw_duration = raw_format.get("duration")  # Read duration field.
+    try:  # Convert duration to float.
+        return float(raw_duration) if raw_duration is not None else 0.0  # Return parsed duration.
+    except (TypeError, ValueError):  # Handle invalid duration values.
+        return 0.0  # Return unknown duration.
+
+
+def read_audio_tracks(file_path: Path, input_dir: Path, detect_language: bool) -> list[AudioTrackRecord]:
+    """
+    Read audio-track records from one supported media file.
+
+    :param file_path: Media file path.
+    :param input_dir: Input directory path.
+    :param detect_language: Whether sampled fallback detection may run.
+    :return: Audio-track records.
+    """
+
+    ffprobe_data = probe_media(file_path)  # Read duration metadata from ffprobe.
+    mkvmerge_data = probe_mkvmerge(file_path)  # Read track order metadata from MKVToolNix.
+    mkvmerge_audio_tracks = read_mkvmerge_audio_tracks(mkvmerge_data)  # Read audio tracks in mkvpropedit selector order.
+    format_duration = read_format_duration(ffprobe_data)  # Read format duration.
+    audio_tracks: list[AudioTrackRecord] = []  # Store audio records.
+
+    for audio_position, track in enumerate(mkvmerge_audio_tracks):  # Iterate audio tracks in MKVToolNix order.
+        current_name = read_mkvmerge_track_name(track)  # Read current track name.
+        stream_index = read_mkvmerge_track_id(track)  # Read MKVToolNix track ID.
+        track_uid = read_mkvmerge_track_uid(track)  # Read Matroska track UID.
+        duration = format_duration  # Use format duration for distributed sample placement.
+        metadata_stream = build_language_metadata_stream(track)  # Build language metadata from MKVToolNix properties.
+        detected_language = detect_audio_track_language(file_path, metadata_stream, audio_position, duration) if detect_language else ""  # Detect language when requested.
+        relative_path = file_path.relative_to(input_dir).as_posix()  # Build deterministic relative path.
+        audio_tracks.append(AudioTrackRecord(file_path, relative_path, audio_position, stream_index, track_uid, current_name, detected_language))  # Store track record.
+
+    return audio_tracks  # Return audio records.
+
+
+def collect_audio_tracks(input_dir: Path) -> list[AudioTrackRecord]:
+    """
+    Collect every audio-track occurrence under the input directory.
+
+    :param input_dir: Input directory path.
+    :return: Audio-track occurrence records.
+    """
+
+    tracks: list[AudioTrackRecord] = []  # Store all discovered audio tracks.
+    for file_path in discover_supported_files(input_dir):  # Iterate supported Matroska files.
+        try:  # Inspect one file without stopping the full report.
+            tracks.extend(read_audio_tracks(file_path, input_dir, True))  # Add audio records with language detection.
+        except Exception as error:  # Handle unexpected per-file failures.
+            print(f"Skipping {file_path}: {error}")  # Report skipped corrupt or unreadable file.
+
+    return tracks  # Return collected track records.
+
+
+def resolve_default_desired_name(tracks: list[AudioTrackRecord], existing_value: str | None) -> str:
+    """
+    Resolve desired_new_name for one current-name group.
+
+    :param tracks: Audio tracks in the group.
+    :param existing_value: Existing desired value from a prior report.
+    :return: Desired new name.
+    """
+
+    if existing_value is not None and existing_value != "":  # Preserve existing manual value when present.
+        return existing_value  # Return manual desired name.
+
+    detected_languages = [track.detected_language for track in tracks]  # Collect detected languages for every occurrence.
+    unique_languages = sorted({language for language in detected_languages if language != ""})  # Collect non-empty detected languages.
+    if len(detected_languages) > 0 and all(language != "" for language in detected_languages) and len(unique_languages) == 1:  # Verify every occurrence has the same confident language.
+        return unique_languages[0]  # Return automatic desired name.
+    return existing_value if existing_value is not None else ""  # Return existing empty value or fresh empty value.
+
+
+def build_report_data(tracks: list[AudioTrackRecord], existing_desired_names: dict[str, str]) -> dict[str, dict[str, str]]:
+    """
+    Build deterministic human-editable report data.
+
+    :param tracks: Audio-track occurrence records.
+    :param existing_desired_names: Preserved desired names keyed by display track name.
+    :return: Report JSON data.
+    """
+
+    grouped_tracks: dict[str, list[AudioTrackRecord]] = {}  # Store tracks by current display name.
+    for track in tracks:  # Iterate collected tracks.
+        grouped_tracks.setdefault(display_track_name(track.current_name), []).append(track)  # Add track to current-name group.
+
+    ordered_group_names = sorted(grouped_tracks, key=lambda name: (-len(grouped_tracks[name]), name.casefold()))  # Order groups by count then name.
+    report_data: dict[str, dict[str, str]] = {}  # Store final report object.
+
+    for display_name in ordered_group_names:  # Iterate ordered groups.
+        group_tracks = sorted(grouped_tracks[display_name], key=lambda track: (track.relative_path.casefold(), track.audio_position))  # Order occurrences deterministically.
+        group_key = f"{display_name} ({len(group_tracks)})"  # Build count-bearing group key.
+        existing_value = existing_desired_names.get(display_name)  # Read preserved desired value.
+        group_data: dict[str, str] = {"desired_new_name": resolve_default_desired_name(group_tracks, existing_value)}  # Initialize editable group data.
+        for track in group_tracks:  # Iterate group occurrences.
+            group_data[build_occurrence_key(track)] = track.detected_language  # Store occurrence detected language.
+        report_data[group_key] = group_data  # Store completed group.
+
+    return report_data  # Return deterministic report data.
+
+
+def write_report(report_path: Path, report_data: dict[str, dict[str, str]]) -> None:
+    """
+    Write report JSON safely and atomically.
+
+    :param report_path: Destination report path.
+    :param report_data: Report JSON data.
+    :return: None.
+    """
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)  # Ensure output directory exists.
+    serialized_report = json.dumps(report_data, ensure_ascii=False, indent=4) + "\n"  # Serialize readable UTF-8 JSON.
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=report_path.parent, delete=False, newline="\n") as temp_file:  # Create temporary report file.
+        temp_file.write(serialized_report)  # Write complete JSON payload.
+        temp_name = temp_file.name  # Store temporary file path.
+    os.replace(temp_name, report_path)  # Atomically replace final report.
+
+
+def generate_report(input_dir: str = INPUT_DIR, report_path: Path = REPORT_PATH) -> dict[str, dict[str, str]]:
+    """
+    Generate report.json from current audio-track metadata.
+
+    :param input_dir: Input directory path string.
+    :param report_path: Output report path.
+    :return: Generated report data.
+    """
+
+    root_path = Path(input_dir)  # Resolve configured input directory path.
+    if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
+        print(f"Input directory not found: {root_path}")  # Report missing input directory.
+        return {}  # Return empty report data without writing stale content.
+
+    existing_desired_names = read_existing_desired_names(report_path)  # Preserve safe manual desired names.
+    tracks = collect_audio_tracks(root_path)  # Collect all audio tracks.
+    report_data = build_report_data(tracks, existing_desired_names)  # Build report JSON object.
+    write_report(report_path, report_data)  # Write report safely.
+    print(f"Report written: {report_path}")  # Report output path.
+    return report_data  # Return generated data.
+
+
+def main() -> None:
+    """
+    Generate the audio-track rename report.
+
+    :return: None.
+    """
+
+    generate_report()  # Generate default report.
+
+
+if __name__ == "__main__":  # Run script entry point when executed directly.
+    main()  # Generate report from default configuration.
