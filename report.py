@@ -4,12 +4,14 @@ Generate editable track-name rename reports for Matroska video files.
 
 from __future__ import annotations  # Enable modern annotations on older supported Python versions.
 
+import argparse  # Parse command-line arguments.
 from dataclasses import dataclass  # Define compact typed records.
 import json  # Read and write report JSON.
 import os  # Replace completed report files atomically.
 from pathlib import Path  # Represent filesystem paths.
 import re  # Parse existing report group keys.
 import subprocess  # Run ffprobe safely with argument lists.
+import sys  # Return meaningful CLI exit statuses.
 import tempfile  # Create temporary files for safe report writes.
 from typing import Any  # Type dynamic ffprobe JSON values.
 from tqdm import tqdm  # Display report-generation progress.
@@ -255,16 +257,52 @@ def read_existing_desired_names(report_path: Path) -> dict[str, str]:
     return desired_names  # Return preserved desired names.
 
 
-def discover_supported_files(input_dir: Path) -> list[Path]:
+def resolve_selected_file(input_dir: Path, selected_file: str | None) -> Path | None:
+    """
+    Resolve one exact selected media file under the input directory.
+
+    :param input_dir: Input directory path.
+    :param selected_file: Relative or absolute selected file path.
+    :return: Selected media path or None.
+    """
+
+    if selected_file is None or selected_file.strip() == "":  # Verify whether file selection was provided.
+        return None  # Return no selected file.
+
+    try:  # Resolve root and selected media paths.
+        root_path = input_dir.resolve(strict=False)  # Resolve input directory path.
+        selected_path = Path(selected_file)  # Build selected path object.
+        media_path = selected_path if selected_path.is_absolute() else root_path / selected_path  # Resolve relative selections under input directory.
+        resolved_media_path = media_path.resolve(strict=False)  # Resolve final selected path.
+        resolved_media_path.relative_to(root_path)  # Verify selected path remains under input directory.
+    except (OSError, ValueError):  # Handle invalid or escaping selected paths.
+        print(f"Selected file is outside input directory or invalid: {selected_file}")  # Report invalid selection.
+        return None  # Return no selected file.
+
+    if not resolved_media_path.exists() or not resolved_media_path.is_file():  # Verify selected file exists.
+        print(f"Selected file not found: {resolved_media_path}")  # Report missing selected file.
+        return None  # Return no selected file.
+    if resolved_media_path.suffix.lower() not in SUPPORTED_EXTENSIONS:  # Verify selected file is supported Matroska.
+        print(f"Selected file is not a supported Matroska file: {resolved_media_path}")  # Report unsupported selected file.
+        return None  # Return no selected file.
+
+    return resolved_media_path  # Return exact selected file path.
+
+
+def discover_supported_files(input_dir: Path, selected_file: str | None = None) -> list[Path]:
     """
     Recursively discover supported Matroska video files.
 
     :param input_dir: Input directory path.
+    :param selected_file: Optional exact selected file under the input directory.
     :return: Sorted supported file paths.
     """
 
     if not input_dir.exists() or not input_dir.is_dir():  # Verify input directory can be scanned.
         return []  # Return no files when input directory is unavailable.
+    selected_path = resolve_selected_file(input_dir, selected_file) if selected_file is not None else None  # Resolve optional selected file.
+    if selected_file is not None:  # Verify exact single-file mode was requested.
+        return [selected_path] if selected_path is not None else []  # Return only selected media file.
 
     supported_files: list[Path] = []  # Store discovered Matroska files.
     for file_path in input_dir.rglob("*"):  # Walk every descendant path.
@@ -594,16 +632,17 @@ def read_subtitle_tracks(file_path: Path, input_dir: Path, detect_language: bool
     return subtitle_tracks  # Return subtitle records.
 
 
-def collect_audio_tracks(input_dir: Path) -> list[AudioTrackRecord]:
+def collect_audio_tracks(input_dir: Path, selected_file: str | None = None) -> list[AudioTrackRecord]:
     """
     Collect every audio-track occurrence under the input directory.
 
     :param input_dir: Input directory path.
+    :param selected_file: Optional exact selected file under the input directory.
     :return: Audio-track occurrence records.
     """
 
     tracks: list[AudioTrackRecord] = []  # Store all discovered audio tracks.
-    supported_files = discover_supported_files(input_dir)  # Discover supported Matroska files once.
+    supported_files = discover_supported_files(input_dir, selected_file)  # Discover supported Matroska files once.
     with tqdm(supported_files, desc="Processing MKV", unit="file") as progress_bar:  # Build cleanup-managed progress bar.
         for file_path in progress_bar:  # Iterate supported Matroska files with progress.
             progress_bar.set_description(f"Processing: {file_path.name}")  # Show current MKV filename.
@@ -615,16 +654,17 @@ def collect_audio_tracks(input_dir: Path) -> list[AudioTrackRecord]:
     return tracks  # Return collected track records.
 
 
-def collect_subtitle_tracks(input_dir: Path) -> list[SubtitleTrackRecord]:
+def collect_subtitle_tracks(input_dir: Path, selected_file: str | None = None) -> list[SubtitleTrackRecord]:
     """
     Collect every subtitle-track occurrence under the input directory.
 
     :param input_dir: Input directory path.
+    :param selected_file: Optional exact selected file under the input directory.
     :return: Subtitle-track occurrence records.
     """
 
     tracks: list[SubtitleTrackRecord] = []  # Store all discovered subtitle tracks.
-    supported_files = discover_supported_files(input_dir)  # Discover supported Matroska files once.
+    supported_files = discover_supported_files(input_dir, selected_file)  # Discover supported Matroska files once.
     with tqdm(supported_files, desc="Processing subtitle MKV", unit="file") as progress_bar:  # Build cleanup-managed progress bar.
         for file_path in progress_bar:  # Iterate supported Matroska files with progress.
             progress_bar.set_description(f"Processing subtitles: {file_path.name}")  # Show current MKV filename.
@@ -728,58 +768,106 @@ def write_report(report_path: Path, report_data: dict[str, dict[str, str]]) -> N
     os.replace(temp_name, report_path)  # Atomically replace final report.
 
 
-def generate_audio_report(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH) -> dict[str, dict[str, str]]:
+def generate_audio_report(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, selected_file: str | None = None) -> dict[str, dict[str, str]]:
     """
     Generate audio_report.json from current audio-track metadata.
 
     :param input_dir: Input directory path string.
     :param report_path: Output report path.
+    :param selected_file: Optional exact selected file under the input directory.
     :return: Generated report data.
     """
 
-    root_path = Path(input_dir)  # Resolve configured input directory path.
+    root_path = Path(input_dir).resolve(strict=False)  # Resolve configured input directory path.
     if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
         print(f"Input directory not found: {root_path}")  # Report missing input directory.
         return {}  # Return empty report data without writing stale content.
 
     existing_desired_names = read_existing_desired_names(report_path)  # Preserve safe manual desired names.
-    tracks = collect_audio_tracks(root_path)  # Collect all audio tracks.
+    tracks = collect_audio_tracks(root_path, selected_file)  # Collect all audio tracks.
     report_data = build_audio_report_data(tracks, existing_desired_names)  # Build report JSON object.
     write_report(report_path, report_data)  # Write report safely.
     print(f"Report written: {report_path}")  # Report output path.
     return report_data  # Return generated data.
 
 
-def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: Path = SUBTITLE_REPORT_PATH) -> dict[str, dict[str, str]]:
+def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: Path = SUBTITLE_REPORT_PATH, selected_file: str | None = None) -> dict[str, dict[str, str]]:
     """
     Generate subtitles_report.json from current embedded subtitle-track metadata.
 
     :param input_dir: Input directory path string.
     :param report_path: Output subtitle report path.
+    :param selected_file: Optional exact selected file under the input directory.
     :return: Generated subtitle report data.
     """
 
-    root_path = Path(input_dir)  # Resolve configured input directory path.
+    root_path = Path(input_dir).resolve(strict=False)  # Resolve configured input directory path.
     if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
         print(f"Input directory not found: {root_path}")  # Report missing input directory.
         return {}  # Return empty report data without writing stale content.
 
     existing_desired_names = read_existing_desired_names(report_path)  # Preserve safe manual desired names.
-    tracks = collect_subtitle_tracks(root_path)  # Collect all embedded subtitle tracks.
+    tracks = collect_subtitle_tracks(root_path, selected_file)  # Collect all embedded subtitle tracks.
     report_data = build_subtitle_report_data(tracks, existing_desired_names)  # Build subtitle report JSON object.
     write_report(report_path, report_data)  # Write subtitle report safely.
     print(f"Subtitle report written: {report_path}")  # Report output path.
     return report_data  # Return generated data.
 
 
+def build_report_argument_parser() -> argparse.ArgumentParser:
+    """
+    Build the report-generation argument parser.
+
+    :return: Argument parser.
+    """
+
+    parser = argparse.ArgumentParser(description="Generate audio and embedded subtitle track-name reports.")  # Create CLI parser.
+    parser.add_argument("--video", action="store_true", help="Accept video selection; video has no report and creates no file.")  # Add video no-report flag.
+    parser.add_argument("--audio", action="store_true", help="Generate the audio track-name report.")  # Add audio report flag.
+    parser.add_argument("--subtitles", action="store_true", help="Generate the embedded subtitle track-name report.")  # Add subtitle report flag.
+    parser.add_argument("--input-dir", default=INPUT_DIR, help="Input directory containing Matroska files.")  # Add input directory option.
+    parser.add_argument("--audio-report", default=str(AUDIO_REPORT_PATH), help="Audio report output path.")  # Add audio report path option.
+    parser.add_argument("--subtitle-report", default=str(SUBTITLE_REPORT_PATH), help="Subtitle report output path.")  # Add subtitle report path option.
+    parser.add_argument("--file", default=None, help="Exact relative or absolute MKV file under input directory.")  # Add single-file option.
+    return parser  # Return configured parser.
+
+
+def run_report_cli(arguments: list[str] | None = None) -> int:
+    """
+    Run the report-generation CLI.
+
+    :param arguments: Optional argument list.
+    :return: Process exit status.
+    """
+
+    parser = build_report_argument_parser()  # Build CLI parser.
+    parsed_args = parser.parse_args(arguments)  # Parse CLI arguments.
+    if not parsed_args.video and not parsed_args.audio and not parsed_args.subtitles:  # Verify at least one track type was selected.
+        parser.error("Select at least one of --video, --audio, or --subtitles.")  # Exit with argument error.
+
+    input_path = Path(parsed_args.input_dir).resolve(strict=False)  # Resolve input directory argument.
+    if not input_path.exists() or not input_path.is_dir():  # Verify input directory exists before reporting.
+        print(f"Input directory not found: {input_path}")  # Report missing input directory.
+        return 1  # Return failure status.
+
+    if parsed_args.video:  # Verify video selection was provided.
+        print("Video track names are deterministic and do not need a report.")  # Report no video report file.
+    if parsed_args.audio:  # Verify audio report was requested.
+        generate_audio_report(parsed_args.input_dir, Path(parsed_args.audio_report), parsed_args.file)  # Generate audio report.
+    if parsed_args.subtitles:  # Verify subtitle report was requested.
+        generate_subtitle_report(parsed_args.input_dir, Path(parsed_args.subtitle_report), parsed_args.file)  # Generate subtitle report.
+
+    return 0  # Return success status.
+
+
 def main() -> None:
     """
-    Generate the audio-track rename report.
+    Generate selected track-name reports.
 
     :return: None.
     """
 
-    generate_audio_report()  # Generate default audio report.
+    sys.exit(run_report_cli())  # Run CLI and return process status.
 
 
 if __name__ == "__main__":  # Run script entry point when executed directly.
