@@ -1,6 +1,6 @@
 <div align="center">
   
-# [Video Audio Tracks Renamer.](../README.md) <img src="https://github.com/devicons/devicon/blob/master/icons/python/python-original.svg"  width="3%" height="3%">
+# [MKV Track Metadata Renamer.](../README.md) <img src="https://github.com/devicons/devicon/blob/master/icons/python/python-original.svg"  width="3%" height="3%">
 
 </div>
 
@@ -24,7 +24,7 @@ Metadata-only Matroska track-name renamer that generates human-editable audio an
 </div>
 
 ## Table of Contents
-- [Video Audio Tracks Renamer. ](#video-audio-tracks-renamer-)
+- [MKV Track Metadata Renamer. ](#mkv-track-metadata-renamer-)
 	- [Table of Contents](#table-of-contents)
 	- [Introduction](#introduction)
 	- [Setup](#setup)
@@ -33,10 +33,11 @@ Metadata-only Matroska track-name renamer that generates human-editable audio an
 		- [Linux](#linux)
 		- [macOS](#macos)
 	- [Run Python Code:](#run-python-code)
-		- [Generate report.json](#generate-reportjson)
+		- [Generate audio_report.json](#generate-audio_reportjson)
 		- [Generate subtitles_report.json](#generate-subtitles_reportjson)
 		- [Review desired_new_name](#review-desired_new_name)
-		- [Rename video and audio track metadata](#rename-video-and-audio-track-metadata)
+		- [Rename from reviewed reports](#rename-from-reviewed-reports)
+		- [Automatic detect-and-rename workflow](#automatic-detect-and-rename-workflow)
 		- [Direct Python execution](#direct-python-execution)
 		- [Dependencies](#dependencies)
 	- [Project Structure](#project-structure)
@@ -46,7 +47,7 @@ Metadata-only Matroska track-name renamer that generates human-editable audio an
 
 ## Introduction
 
-Video Audio Tracks Renamer recursively scans the configured input directory for Matroska video files and collects every audio-track occurrence into `report.json`. Embedded subtitle tracks are collected separately into `subtitles_report.json`.
+MKV Track Metadata Renamer recursively scans the configured input directory for Matroska video files and collects every audio-track occurrence into `audio_report.json`. Embedded subtitle tracks are collected separately into `subtitles_report.json`.
 
 The default input directory is:
 
@@ -72,19 +73,21 @@ External subtitle files such as `.srt`, `.ass`, `.ssa`, `.vtt`, `.sub`, and `.id
 From this project directory:
 
 ```bash
-cd "Video Audio Tracks Renamer"
+cd "MKV Track Metadata Renamer"
 ```
 
 The intended workflow is:
 
 1. Install dependencies.
-2. Generate `report.json` and `subtitles_report.json`.
+2. Generate `audio_report.json` and `subtitles_report.json`.
 3. Review and edit `desired_new_name` values.
 4. Execute renaming.
 
+For fully automatic detected-language naming without manually reviewing reports, use `make auto`.
+
 ## Installation:
 
-The installation scripts create or reuse the local `venv`, install Python packages from `requirements.txt`, install or verify FFmpeg/ffprobe, install or verify MKVToolNix, and verify that `ffmpeg`, `ffprobe`, `mkvpropedit`, and `mkvmerge` can run.
+The installation scripts create or reuse the local `venv`, install Python packages from `requirements.txt`, install or verify FFmpeg/ffprobe, install or verify MKVToolNix, and verify that `ffmpeg`, `ffprobe`, `mkvpropedit`, `mkvmerge`, and `mkvextract` can run.
 
 You can use the Makefile installer target:
 
@@ -118,13 +121,13 @@ The macOS installer requires Homebrew and installs `ffmpeg` and the `mkvtoolnix`
 
 ## Run Python Code:
 
-### Generate report.json
+### Generate audio_report.json
 
 ```bash
 make report
 ```
 
-This runs `report.py` and writes `report.json` in this project directory. The report groups occurrences by the current audio-track name and occurrence count.
+This runs `report.py` and writes `audio_report.json` in this project directory. The report groups occurrences by the current audio-track name and occurrence count.
 
 Each occurrence key includes the relative file path, the audio ordinal, the MKVToolNix track ID, and the Matroska Track UID when available:
 
@@ -164,21 +167,21 @@ make reports
 
 ### Review desired_new_name
 
-Edit `report.json` and `subtitles_report.json` before renaming.
+Edit `audio_report.json` and `subtitles_report.json` before renaming.
 
 If `desired_new_name` is non-empty, every occurrence in that group uses that value as the target name.
 
 If `desired_new_name` is empty, the renamer falls back to that occurrence's detected language from the report. If both values are empty, the track is skipped safely.
 
-When regenerating `report.json`, existing manual `desired_new_name` values are preserved when the corresponding current-name group can be safely matched.
+When regenerating `audio_report.json` or `subtitles_report.json`, existing manual `desired_new_name` values are preserved when the corresponding current-name group can be safely matched.
 
-### Rename video and audio track metadata
+### Rename from reviewed reports
 
 ```bash
 make rename
 ```
 
-This runs `audio_tracks_renamer.py`, consumes `report.json` and optional `subtitles_report.json`, re-probes each file, sets the single video track name to the exact filename stem, verifies each audio/subtitle track still matches its report, and applies one `mkvpropedit` invocation per file when one or more track names need renaming.
+This runs `track_metadata_renamer.py`, consumes `audio_report.json` and optional `subtitles_report.json`, re-probes each file, sets the single video track name to the exact filename stem, verifies each audio/subtitle track still matches its report, and applies one `mkvpropedit` invocation per file when one or more track names need renaming.
 
 Subtitle-only renaming is available with:
 
@@ -214,13 +217,24 @@ mkvpropedit FILE --edit track:vN --set name=NEW_NAME
 mkvpropedit FILE --edit track:sN --set name=NEW_NAME
 ```
 
+### Automatic detect-and-rename workflow
+
+```bash
+make auto
+```
+
+This runs `auto_track_metadata_renamer.py`, recursively discovers supported Matroska files under `INPUT_DIR`, detects audio and embedded subtitle languages, sets the ordinary single video track name from the filename stem, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies all applicable video/audio/subtitle `name=` edits for each MKV in one `mkvpropedit` invocation.
+
+Automatic mode does not require existing report files. Unknown audio or subtitle languages are skipped safely. Image-based subtitle tracks are renamed only when reliable metadata resolves the language.
+
 ### Direct Python execution
 
 ```bash
 python report.py
 python subtitle_report.py
-python audio_tracks_renamer.py
+python track_metadata_renamer.py
 python subtitle_tracks_renamer.py
+python auto_track_metadata_renamer.py
 ```
 
 ### Dependencies
@@ -249,14 +263,16 @@ External executables required by the final workflow:
 - `ffprobe`
 - `mkvmerge`
 - `mkvpropedit`
+- `mkvextract`
 
 Python packages are defined only in [requirements.txt](requirements.txt).
 
 ## Project Structure
 
-- [report.py](report.py): Recursively inspects supported Matroska files under `INPUT_DIR`, detects audio languages, preserves manual report values, and writes `report.json` safely.
+- [report.py](report.py): Recursively inspects supported Matroska files under `INPUT_DIR`, detects audio languages, preserves manual report values, and writes `audio_report.json` safely.
 - [subtitle_report.py](subtitle_report.py): Generates `subtitles_report.json` for embedded subtitle tracks.
-- [audio_tracks_renamer.py](audio_tracks_renamer.py): Reads `report.json` and optional `subtitles_report.json`, resolves audio/subtitle target names, resolves video target names from filename stems, validates current file metadata, skips unsafe entries, and applies renames.
+- [track_metadata_renamer.py](track_metadata_renamer.py): Reads `audio_report.json` and optional `subtitles_report.json`, resolves audio/subtitle target names, resolves video target names from filename stems, validates current file metadata, skips unsafe entries, and applies renames.
+- [auto_track_metadata_renamer.py](auto_track_metadata_renamer.py): Runs the complete automatic video/audio/subtitle detection and track-name renaming workflow.
 - [subtitle_tracks_renamer.py](subtitle_tracks_renamer.py): Applies embedded subtitle-track renames from `subtitles_report.json` only.
 - [audio_language_detector.py](audio_language_detector.py): Resolves language from metadata first, then uses distributed temporary audio samples with Whisper only when needed.
 - [subtitle_language_detector.py](subtitle_language_detector.py): Resolves embedded subtitle language from metadata first, then text subtitle content when available.
@@ -264,17 +280,17 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 - [install_windows.bat](install_windows.bat): Windows dependency installer.
 - [install_linux.sh](install_linux.sh): Linux dependency installer.
 - [install_macos.sh](install_macos.sh): macOS dependency installer.
-- [Makefile](Makefile): Provides `install`, `report`, `subtitle_report`, `reports`, `rename`, `rename_subtitles`, `run`, `dependencies`, `generate_requirements`, and `clean` targets.
+- [Makefile](Makefile): Provides `install`, `report`, `subtitle_report`, `reports`, `rename`, `rename_subtitles`, `auto`, `run`, `dependencies`, `generate_requirements`, and `clean` targets.
 - [requirements.txt](requirements.txt): Python dependency list.
 
 ## Safety Notes
 
-This utility modifies Matroska files in place. Review `report.json` and `subtitles_report.json` carefully before running `make rename`.
+This utility modifies Matroska files in place. Review `audio_report.json` and `subtitles_report.json` carefully before running `make rename`, or test on copies before running `make auto`.
 
 The implementation skips files or tracks safely when:
 
 - `INPUT_DIR` is missing.
-- `report.json` is missing or malformed.
+- `audio_report.json` is missing or malformed.
 - A file was moved or deleted after report generation.
 - A file is unsupported, corrupt, or has no audio tracks.
 - A file has multiple video tracks and the video target is ambiguous.
