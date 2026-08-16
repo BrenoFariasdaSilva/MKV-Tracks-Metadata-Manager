@@ -8,7 +8,7 @@
   
 ---
 
-Metadata-only Matroska audio-track name renamer that generates a human-editable report, lets the user choose desired track names, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
+Metadata-only Matroska track-name renamer that generates a human-editable audio report, sets the video track name from the filename, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
 
 ---
 
@@ -35,7 +35,7 @@ Metadata-only Matroska audio-track name renamer that generates a human-editable 
 	- [Run Python Code:](#run-python-code)
 		- [Generate report.json](#generate-reportjson)
 		- [Review desired_new_name](#review-desired_new_name)
-		- [Rename audio-track metadata](#rename-audio-track-metadata)
+		- [Rename video and audio track metadata](#rename-video-and-audio-track-metadata)
 		- [Direct Python execution](#direct-python-execution)
 		- [Dependencies](#dependencies)
 	- [Project Structure](#project-structure)
@@ -60,7 +60,7 @@ Supported extensions are:
 .mk3d
 ```
 
-The project renames only audio-track name metadata. The actual file modification is performed by `mkvpropedit`, which edits Matroska metadata in place. The implementation does not re-encode, remux, remove streams, reorder tracks, change default flags, change forced flags, change language metadata, alter subtitles, alter chapters, alter attachments, or modify audio/video contents.
+The project renames only track name metadata. The actual file modification is performed by `mkvpropedit`, which edits Matroska metadata in place. The implementation sets one ordinary video track name to the MKV filename stem and applies report-driven audio names. It does not re-encode, remux, remove streams, reorder tracks, change default flags, change forced flags, change language metadata, alter subtitles, alter chapters, alter attachments, or modify audio/video contents.
 
 Language resolution prefers metadata first. When metadata cannot determine a language, the fallback path extracts short temporary samples from multiple intermediate portions of the specific audio stream, analyzes them with Whisper, aggregates the sample results conservatively, and leaves the language unknown when confidence is insufficient or samples conflict. Temporary samples are created only for analysis and are cleaned up automatically.
 
@@ -145,13 +145,27 @@ If `desired_new_name` is empty, the renamer falls back to that occurrence's dete
 
 When regenerating `report.json`, existing manual `desired_new_name` values are preserved when the corresponding current-name group can be safely matched.
 
-### Rename audio-track metadata
+### Rename video and audio track metadata
 
 ```bash
 make rename
 ```
 
-This runs `audio_tracks_renamer.py`, consumes `report.json`, re-probes each file, verifies the current track still matches the report, and applies one `mkvpropedit` invocation per file when one or more audio tracks need renaming.
+This runs `audio_tracks_renamer.py`, consumes `report.json`, re-probes each file, sets the single video track name to the exact filename stem, verifies each audio track still matches the report, and applies one `mkvpropedit` invocation per file when one or more track names need renaming.
+
+For example:
+
+```bash
+300 2006 1080p Dual.mkv
+```
+
+sets the video track name to:
+
+```bash
+300 2006 1080p Dual
+```
+
+If an MKV contains multiple video tracks, the video rename is skipped for that file instead of guessing which video track should be renamed.
 
 `mkvpropedit` uses the Matroska Track UID selector when available:
 
@@ -159,10 +173,11 @@ This runs `audio_tracks_renamer.py`, consumes `report.json`, re-probes each file
 mkvpropedit FILE --edit track:=UID --set name=NEW_NAME
 ```
 
-When a Track UID is unavailable, the implementation falls back to the MKVToolNix audio ordinal selector:
+When a Track UID is unavailable, the implementation falls back to the MKVToolNix type ordinal selector:
 
 ```bash
 mkvpropedit FILE --edit track:aN --set name=NEW_NAME
+mkvpropedit FILE --edit track:vN --set name=NEW_NAME
 ```
 
 ### Direct Python execution
@@ -204,9 +219,9 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 ## Project Structure
 
 - [report.py](report.py): Recursively inspects supported Matroska files under `INPUT_DIR`, detects audio languages, preserves manual report values, and writes `report.json` safely.
-- [audio_tracks_renamer.py](audio_tracks_renamer.py): Reads `report.json`, resolves target names, validates current file metadata, skips unsafe entries, and applies renames.
+- [audio_tracks_renamer.py](audio_tracks_renamer.py): Reads `report.json`, resolves audio target names, resolves video target names from filename stems, validates current file metadata, skips unsafe entries, and applies renames.
 - [audio_language_detector.py](audio_language_detector.py): Resolves language from metadata first, then uses distributed temporary audio samples with Whisper only when needed.
-- [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for audio-track `name=` metadata only.
+- [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio track `name=` metadata only.
 - [install_windows.bat](install_windows.bat): Windows dependency installer.
 - [install_linux.sh](install_linux.sh): Linux dependency installer.
 - [install_macos.sh](install_macos.sh): macOS dependency installer.
@@ -223,6 +238,7 @@ The implementation skips files or tracks safely when:
 - `report.json` is missing or malformed.
 - A file was moved or deleted after report generation.
 - A file is unsupported, corrupt, or has no audio tracks.
+- A file has multiple video tracks and the video target is ambiguous.
 - A track has no target name and no detected language.
 - The current track name, track ID, or Track UID no longer matches the report.
 - `ffprobe`, `mkvmerge`, `ffmpeg`, or `mkvpropedit` is unavailable.
