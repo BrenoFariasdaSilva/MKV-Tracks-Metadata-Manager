@@ -103,6 +103,8 @@ def valid_track_selector(track_selector: str) -> bool:
         return track_selector[7:].isdigit()  # Return audio ordinal numeric validation.
     if track_selector.startswith("track:v"):  # Verify video ordinal selector prefix.
         return track_selector[7:].isdigit()  # Return video ordinal numeric validation.
+    if track_selector.startswith("track:s"):  # Verify subtitle ordinal selector prefix.
+        return track_selector[7:].isdigit()  # Return subtitle ordinal numeric validation.
     return False  # Return unsupported selector result.
 
 
