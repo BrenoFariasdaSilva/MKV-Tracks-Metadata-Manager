@@ -11,7 +11,8 @@ from typing import Any  # Type dynamic JSON data.
 import json  # Read report JSON.
 import sys  # Return meaningful CLI exit statuses.
 
-from mkvpropedit_wrapper import MkvpropeditResult, TrackNameEdit, apply_track_name_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
+from audio_language_detector import normalize_language_value  # Reuse canonical language normalization.
+from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, apply_track_metadata_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
 from report import AUDIO_REPORT_PATH, INPUT_DIR, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, discover_supported_files, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_subtitle_tracks, read_video_tracks, resolve_selected_file  # Reuse report parsing and metadata inspection.
 
 
@@ -23,6 +24,11 @@ class RenameSummary:
 
     planned: int = 0  # Store planned rename count.
     changed: int = 0  # Store successful changed track count.
+    default_planned: int = 0  # Store planned audio default-flag change count.
+    default_changed: int = 0  # Store successful audio default-flag change count.
+    default_already: int = 0  # Store files whose requested audio default was already correct.
+    default_missing: int = 0  # Store files missing requested audio language.
+    default_ambiguous: int = 0  # Store files with ambiguous requested audio matches.
     warnings: int = 0  # Store warning count from completed mkvpropedit edits.
     skipped: int = 0  # Store skipped track count.
     failed: int = 0  # Store failed file or track count.
@@ -41,6 +47,16 @@ class TrackSelection:
 
 
 @dataclass(frozen=True)
+class DefaultAudioConfig:
+    """
+    Stores default-audio flag configuration.
+    """
+
+    enabled: bool = False  # Store whether audio default-flag edits are enabled.
+    language: str = "English"  # Store requested canonical audio language.
+
+
+@dataclass(frozen=True)
 class PlannedRename:
     """
     Stores one validated report-driven rename request.
@@ -53,6 +69,7 @@ class PlannedRename:
     track_uid: int | None  # Store Matroska track UID from report.
     current_name: str  # Store current track name from report group.
     target_name: str  # Store desired target name.
+    detected_language: str  # Store detected canonical audio language from report.
 
 
 @dataclass(frozen=True)
@@ -166,7 +183,8 @@ def collect_planned_renames(report_data: dict[str, Any], input_dir: Path, summar
 
             relative_path, audio_position, track_id, track_uid = parsed_occurrence  # Unpack occurrence target.
             file_path = input_dir / Path(relative_path)  # Build absolute file path.
-            planned_renames.append(PlannedRename(file_path, relative_path, audio_position, track_id, track_uid, current_name, target_name))  # Store planned rename.
+            detected_language = normalize_language_value(detected_value) if isinstance(detected_value, str) else ""  # Normalize report language for default-audio matching.
+            planned_renames.append(PlannedRename(file_path, relative_path, audio_position, track_id, track_uid, current_name, target_name, detected_language))  # Store planned rename.
 
     return planned_renames  # Return planned renames.
 
@@ -244,7 +262,7 @@ def group_subtitle_plans_by_file(plans: list[PlannedSubtitleRename]) -> dict[Pat
     return grouped_plans  # Return grouped plans.
 
 
-def validate_video_plan_for_file(file_path: Path, input_dir: Path, summary: RenameSummary) -> TrackNameEdit | None:
+def validate_video_plan_for_file(file_path: Path, input_dir: Path, summary: RenameSummary) -> TrackMetadataEdit | None:
     """
     Validate deterministic video-track naming against current file metadata.
 
@@ -290,10 +308,10 @@ def validate_video_plan_for_file(file_path: Path, input_dir: Path, summary: Rena
 
     track_selector = build_track_selector("v", current_track.video_position, current_track.track_uid)  # Prefer Matroska Track UID selector when available.
     summary.planned += 1  # Count validated video edit.
-    return TrackNameEdit(track_selector, current_track.current_name, target_name)  # Return validated operation.
+    return TrackMetadataEdit(track_selector, current_track.current_name, target_name)  # Return validated operation.
 
 
-def validate_audio_plans_for_file(file_path: Path, plans: list[PlannedRename], input_dir: Path, summary: RenameSummary) -> list[TrackNameEdit]:
+def validate_audio_plans_for_file(file_path: Path, plans: list[PlannedRename], input_dir: Path, summary: RenameSummary) -> list[TrackMetadataEdit]:
     """
     Validate planned audio renames against current file metadata.
 
@@ -320,7 +338,7 @@ def validate_audio_plans_for_file(file_path: Path, plans: list[PlannedRename], i
         summary.messages.append(f"Metadata read failed for {file_path}: {error}")  # Store failure reason.
         return []  # Return no operations.
 
-    operations: list[TrackNameEdit] = []  # Store validated mkvpropedit operations.
+    operations: list[TrackMetadataEdit] = []  # Store validated mkvpropedit operations.
     for plan in sorted(plans, key=lambda item: item.audio_position):  # Iterate plans by audio position.
         if plan.audio_position >= len(current_tracks):  # Verify track ordinal still exists.
             summary.failed += 1  # Count missing-track failure.
@@ -346,13 +364,13 @@ def validate_audio_plans_for_file(file_path: Path, plans: list[PlannedRename], i
             continue  # Skip stale occurrence.
 
         track_selector = build_track_selector("a", plan.audio_position, current_track.track_uid)  # Prefer Matroska Track UID selector when available.
-        operations.append(TrackNameEdit(track_selector, current_track.current_name, plan.target_name))  # Store validated operation.
+        operations.append(TrackMetadataEdit(track_selector, current_track.current_name, plan.target_name))  # Store validated operation.
         summary.planned += 1  # Count validated edit.
 
     return operations  # Return validated operations.
 
 
-def validate_subtitle_plans_for_file(file_path: Path, plans: list[PlannedSubtitleRename], input_dir: Path, summary: RenameSummary) -> list[TrackNameEdit]:
+def validate_subtitle_plans_for_file(file_path: Path, plans: list[PlannedSubtitleRename], input_dir: Path, summary: RenameSummary) -> list[TrackMetadataEdit]:
     """
     Validate planned subtitle renames against current file metadata.
 
@@ -379,7 +397,7 @@ def validate_subtitle_plans_for_file(file_path: Path, plans: list[PlannedSubtitl
         summary.messages.append(f"Subtitle metadata read failed for {file_path}: {error}")  # Store failure reason.
         return []  # Return no operations.
 
-    operations: list[TrackNameEdit] = []  # Store validated mkvpropedit operations.
+    operations: list[TrackMetadataEdit] = []  # Store validated mkvpropedit operations.
     for plan in sorted(plans, key=lambda item: item.subtitle_position):  # Iterate plans by subtitle position.
         if plan.subtitle_position >= len(current_tracks):  # Verify track ordinal still exists.
             summary.failed += 1  # Count missing-track failure.
@@ -405,10 +423,89 @@ def validate_subtitle_plans_for_file(file_path: Path, plans: list[PlannedSubtitl
             continue  # Skip stale occurrence.
 
         track_selector = build_track_selector("s", plan.subtitle_position, current_track.track_uid)  # Prefer Matroska Track UID selector when available.
-        operations.append(TrackNameEdit(track_selector, current_track.current_name, plan.target_name))  # Store validated operation.
+        operations.append(TrackMetadataEdit(track_selector, current_track.current_name, plan.target_name))  # Store validated operation.
         summary.planned += 1  # Count validated edit.
 
     return operations  # Return validated operations.
+
+
+def plan_default_audio_edits(file_path: Path, plans: list[PlannedRename], input_dir: Path, summary: RenameSummary, default_audio: DefaultAudioConfig) -> list[TrackMetadataEdit]:
+    """
+    Plan safe audio default-flag edits for one file.
+
+    :param file_path: Media file path.
+    :param plans: Planned audio renames for the file.
+    :param input_dir: Input directory path.
+    :param summary: Mutable workflow summary.
+    :param default_audio: Default-audio configuration.
+    :return: mkvpropedit default-flag operations.
+    """
+
+    if not default_audio.enabled:  # Verify default-audio feature is enabled.
+        return []  # Return no default-flag operations.
+    if not file_path.exists():  # Verify media file still exists.
+        summary.messages.append(f"Missing file for default audio: {file_path}")  # Store skip reason.
+        return []  # Return no default-flag operations.
+    if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:  # Verify file remains Matroska video.
+        summary.messages.append(f"Unsupported container skipped for default audio: {file_path}")  # Store skip reason.
+        return []  # Return no default-flag operations.
+
+    try:  # Read current metadata without sampled detection.
+        current_tracks = read_audio_tracks(file_path, input_dir, False)  # Inspect current audio metadata.
+    except Exception as error:  # Handle corrupt or unreadable file.
+        summary.failed += 1  # Count inspection failure.
+        summary.messages.append(f"Default audio metadata read failed for {file_path}: {error}")  # Store failure reason.
+        return []  # Return no default-flag operations.
+
+    matched_plans: list[PlannedRename] = []  # Store safely matched requested-language plans.
+    for plan in sorted(plans, key=lambda item: item.audio_position):  # Iterate plans by audio position.
+        if plan.detected_language != default_audio.language:  # Verify plan language matches requested default.
+            continue  # Skip other languages.
+        if plan.audio_position >= len(current_tracks):  # Verify track ordinal still exists.
+            summary.failed += 1  # Count stale default-audio plan.
+            summary.messages.append(f"Default audio track missing in {plan.relative_path}: audio {plan.audio_position + 1}")  # Store failure reason.
+            continue  # Skip stale plan.
+
+        current_track = current_tracks[plan.audio_position]  # Read current audio track.
+        if plan.track_uid is not None and current_track.track_uid != plan.track_uid:  # Verify Matroska track UID still matches the report.
+            summary.failed += 1  # Count stale default-audio plan.
+            summary.messages.append(f"Default audio Track UID mismatch in {plan.relative_path} audio {plan.audio_position + 1}: report={plan.track_uid!r}, file={current_track.track_uid!r}")  # Store failure reason.
+            continue  # Skip stale plan.
+        if plan.track_id is not None and current_track.stream_index != plan.track_id:  # Verify MKVToolNix track ID still matches the report.
+            summary.failed += 1  # Count stale default-audio plan.
+            summary.messages.append(f"Default audio Track ID mismatch in {plan.relative_path} audio {plan.audio_position + 1}: report={plan.track_id!r}, file={current_track.stream_index!r}")  # Store failure reason.
+            continue  # Skip stale plan.
+        if current_track.current_name not in {plan.current_name, plan.target_name}:  # Verify report still describes this track state.
+            summary.failed += 1  # Count stale default-audio plan.
+            summary.messages.append(f"Default audio name mismatch in {plan.relative_path} audio {plan.audio_position + 1}: report={plan.current_name!r}, target={plan.target_name!r}, file={current_track.current_name!r}")  # Store failure reason.
+            continue  # Skip stale plan.
+        matched_plans.append(plan)  # Store safely matched requested-language plan.
+
+    if len(matched_plans) == 0:  # Verify requested language exists exactly once.
+        summary.default_missing += 1  # Count missing requested default language.
+        summary.messages.append(f"No {default_audio.language} audio track found in {file_path}; default audio flags unchanged.")  # Store missing-language message.
+        return []  # Return no default-flag operations.
+    if len(matched_plans) > 1:  # Verify requested language is unambiguous.
+        summary.default_ambiguous += 1  # Count ambiguous requested default language.
+        summary.messages.append(f"Multiple {default_audio.language} audio tracks found in {file_path}; default audio flags unchanged.")  # Store ambiguity message.
+        return []  # Return no default-flag operations.
+
+    target_position = matched_plans[0].audio_position  # Read unique requested-language track position.
+    operations: list[TrackMetadataEdit] = []  # Store default-flag operations.
+    for current_track in current_tracks:  # Iterate every audio track to enforce one default.
+        target_default = current_track.audio_position == target_position  # Resolve desired default flag.
+        if current_track.default_track == target_default:  # Verify current default flag already matches.
+            continue  # Skip no-op default flag.
+        track_selector = build_track_selector("a", current_track.audio_position, current_track.track_uid)  # Prefer Matroska Track UID selector when available.
+        operations.append(TrackMetadataEdit(track_selector, current_track.current_name, None, target_default))  # Store default-flag operation.
+
+    if not operations:  # Verify whether default flags already match requested state.
+        summary.default_already += 1  # Count idempotent default state.
+        summary.messages.append(f"Default {default_audio.language} audio already correct: {file_path}")  # Store already-correct message.
+        return []  # Return no default-flag operations.
+
+    summary.default_planned += len(operations)  # Count planned default-flag edits.
+    return operations  # Return default-flag operations.
 
 
 def collect_candidate_files(grouped_plans: dict[Path, list[PlannedRename]], grouped_subtitle_plans: dict[Path, list[PlannedSubtitleRename]], input_dir: Path, include_video: bool, selected_file: str | None = None) -> list[Path]:
@@ -432,7 +529,7 @@ def collect_candidate_files(grouped_plans: dict[Path, list[PlannedRename]], grou
     return sorted(candidate_paths, key=lambda path: path.as_posix().lower())  # Return deterministic file order.
 
 
-def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], grouped_subtitle_plans: dict[Path, list[PlannedSubtitleRename]], input_dir: Path, summary: RenameSummary, include_video: bool = True, selected_file: str | None = None) -> list[MkvpropeditResult]:
+def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], grouped_subtitle_plans: dict[Path, list[PlannedSubtitleRename]], input_dir: Path, summary: RenameSummary, include_video: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig()) -> list[MkvpropeditResult]:
     """
     Apply validated renames one mkvpropedit invocation per file.
 
@@ -442,6 +539,7 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], groupe
     :param summary: Mutable workflow summary.
     :param include_video: Whether deterministic video names should be applied.
     :param selected_file: Optional exact selected file under the input directory.
+    :param default_audio: Default-audio configuration.
     :return: mkvpropedit results.
     """
 
@@ -449,28 +547,32 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], groupe
     candidate_files = collect_candidate_files(grouped_plans, grouped_subtitle_plans, input_dir, include_video, selected_file)  # Collect selected video, audio, and subtitle candidate files.
     current_supported_files = {path for path in candidate_files if path.exists() and path.suffix.lower() in SUPPORTED_EXTENSIONS}  # Collect current files for video naming eligibility.
     for file_path in candidate_files:  # Iterate files deterministically.
-        operations: list[TrackNameEdit] = []  # Store combined file operations.
+        operations: list[TrackMetadataEdit] = []  # Store combined file operations.
         video_operation = validate_video_plan_for_file(file_path, input_dir, summary) if include_video and file_path in current_supported_files else None  # Validate deterministic video operation.
         if video_operation is not None:  # Verify video operation exists.
             operations.append(video_operation)  # Add video operation first.
         if file_path in grouped_plans:  # Verify report has audio plans for this file.
             operations.extend(validate_audio_plans_for_file(file_path, grouped_plans[file_path], input_dir, summary))  # Add validated audio operations.
+            operations.extend(plan_default_audio_edits(file_path, grouped_plans[file_path], input_dir, summary, default_audio))  # Add validated audio default-flag operations.
         if file_path in grouped_subtitle_plans:  # Verify subtitle report has plans for this file.
             operations.extend(validate_subtitle_plans_for_file(file_path, grouped_subtitle_plans[file_path], input_dir, summary))  # Add validated subtitle operations.
         if not operations:  # Verify file has operations after validation.
             continue  # Skip files without edits.
 
-        result = apply_track_name_edits(file_path, operations)  # Apply mkvpropedit edits.
+        default_change_count = sum(1 for operation in operations if operation.default_flag is not None)  # Count planned default-flag setters for result summary.
+        result = apply_track_metadata_edits(file_path, operations)  # Apply mkvpropedit edits.
         results.append(result)  # Store command result.
         if result.success and result.warning:  # Verify mkvpropedit completed with warnings.
             summary.changed += result.changed_count  # Count changes because MKVToolNix continued after warnings.
+            summary.default_changed += default_change_count  # Count default-flag changes because MKVToolNix completed with warnings.
             summary.warnings += 1  # Count warning-bearing file.
             warning_text = (result.stderr or result.stdout).strip()  # Resolve warning output text.
             summary.messages.append(f"mkvpropedit warning for {file_path}: {warning_text}")  # Store warning reason.
-            print(f"Renamed {result.changed_count} track name(s) with warning: {file_path}")  # Report warning completion.
+            print(f"Applied {result.changed_count} track metadata change(s) with warning: {file_path}")  # Report warning completion.
         elif result.success:  # Verify mkvpropedit succeeded cleanly.
             summary.changed += result.changed_count  # Count successful changes.
-            print(f"Renamed {result.changed_count} track name(s): {file_path}")  # Report file success.
+            summary.default_changed += default_change_count  # Count successful default-flag changes.
+            print(f"Applied {result.changed_count} track metadata change(s): {file_path}")  # Report file success.
         else:  # Handle mkvpropedit failure.
             summary.failed += result.changed_count  # Count failed changes.
             summary.messages.append(f"mkvpropedit failed for {file_path}: {result.stderr.strip()}")  # Store failure reason.
@@ -505,7 +607,7 @@ def collect_detected_plans_for_file(file_path: Path, input_dir: Path, summary: R
             summary.skipped += 1  # Count unknown-language skip.
             summary.messages.append(f"Skipped unknown automatic audio target for: {track.relative_path} audio {track.audio_position + 1}")  # Store skip reason.
             continue  # Skip unresolved target.
-        audio_plans.append(PlannedRename(track.file_path, track.relative_path, track.audio_position, track.stream_index, track.track_uid, track.current_name, target_name))  # Store detected audio plan.
+        audio_plans.append(PlannedRename(track.file_path, track.relative_path, track.audio_position, track.stream_index, track.track_uid, track.current_name, target_name, track.detected_language))  # Store detected audio plan.
 
     try:  # Read detected subtitle metadata.
         subtitle_tracks = read_subtitle_tracks(file_path, input_dir, True)  # Inspect embedded subtitle tracks with language detection.
@@ -576,7 +678,7 @@ def collect_detected_audio_plans_for_file(file_path: Path, input_dir: Path, summ
             summary.skipped += 1  # Count unknown-language skip.
             summary.messages.append(f"Skipped unknown automatic audio target for: {track.relative_path} audio {track.audio_position + 1}")  # Store skip reason.
             continue  # Skip unresolved target.
-        audio_plans.append(PlannedRename(track.file_path, track.relative_path, track.audio_position, track.stream_index, track.track_uid, track.current_name, target_name))  # Store detected audio plan.
+        audio_plans.append(PlannedRename(track.file_path, track.relative_path, track.audio_position, track.stream_index, track.track_uid, track.current_name, target_name, track.detected_language))  # Store detected audio plan.
 
     return audio_plans  # Return audio plans.
 
@@ -610,7 +712,7 @@ def collect_detected_subtitle_plans_for_file(file_path: Path, input_dir: Path, s
     return subtitle_plans  # Return subtitle plans.
 
 
-def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None) -> RenameSummary:
+def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig()) -> RenameSummary:
     """
     Automatically detect languages and rename video, audio, and subtitle track names.
 
@@ -619,6 +721,7 @@ def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bo
     :param include_audio: Whether audio track names should be processed.
     :param include_subtitles: Whether embedded subtitle track names should be processed.
     :param selected_file: Optional exact selected file under the input directory.
+    :param default_audio: Default-audio configuration.
     :return: Rename workflow summary.
     """
 
@@ -630,16 +733,16 @@ def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bo
         return summary  # Return summary.
 
     grouped_plans, grouped_subtitle_plans = collect_detected_plans(root_path, summary, include_audio, include_subtitles, selected_file)  # Collect automatic detected plans.
-    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file)  # Apply validated rename operations.
+    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file, default_audio)  # Apply validated rename operations.
 
-    print(f"Summary: planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
+    print(f"Summary: planned={summary.planned}, changed={summary.changed}, default_planned={summary.default_planned}, default_changed={summary.default_changed}, default_already={summary.default_already}, default_missing={summary.default_missing}, default_ambiguous={summary.default_ambiguous}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
     for message in summary.messages:  # Iterate accumulated messages.
         print(message)  # Report detailed message.
 
     return summary  # Return workflow summary.
 
 
-def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, subtitle_report_path: Path = SUBTITLE_REPORT_PATH, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None) -> RenameSummary:
+def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, subtitle_report_path: Path = SUBTITLE_REPORT_PATH, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig()) -> RenameSummary:
     """
     Rename deterministic video names plus report-driven audio and subtitle names.
 
@@ -650,6 +753,7 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_
     :param include_audio: Whether audio track names should be processed.
     :param include_subtitles: Whether embedded subtitle track names should be processed.
     :param selected_file: Optional exact selected file under the input directory.
+    :param default_audio: Default-audio configuration.
     :return: Rename workflow summary.
     """
 
@@ -673,16 +777,16 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_
         return summary  # Return summary.
     planned_subtitle_renames = collect_planned_subtitle_renames(subtitle_report_data, root_path, summary) if include_subtitles else []  # Collect selected subtitle rename requests.
     grouped_subtitle_plans = group_subtitle_plans_by_file(planned_subtitle_renames)  # Group subtitle plans by media file.
-    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file)  # Apply validated rename operations.
+    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file, default_audio)  # Apply validated rename operations.
 
-    print(f"Summary: planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
+    print(f"Summary: planned={summary.planned}, changed={summary.changed}, default_planned={summary.default_planned}, default_changed={summary.default_changed}, default_already={summary.default_already}, default_missing={summary.default_missing}, default_ambiguous={summary.default_ambiguous}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
     for message in summary.messages:  # Iterate accumulated messages.
         print(message)  # Report detailed message.
 
     return summary  # Return workflow summary.
 
 
-def process_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, subtitle_report_path: Path = SUBTITLE_REPORT_PATH, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None) -> RenameSummary:
+def process_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, subtitle_report_path: Path = SUBTITLE_REPORT_PATH, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig()) -> RenameSummary:
     """
     Generate selected reports and apply selected track-name metadata changes.
 
@@ -693,6 +797,7 @@ def process_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO
     :param include_audio: Whether audio track names should be processed.
     :param include_subtitles: Whether embedded subtitle track names should be processed.
     :param selected_file: Optional exact selected file under the input directory.
+    :param default_audio: Default-audio configuration.
     :return: Rename workflow summary.
     """
 
@@ -711,7 +816,7 @@ def process_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO
     if include_subtitles:  # Verify subtitle processing was selected.
         generate_subtitle_report(input_dir, subtitle_report_path, selected_file)  # Generate selected subtitle report.
 
-    return rename_track_metadata(input_dir, report_path, subtitle_report_path, include_video, include_audio, include_subtitles, selected_file)  # Apply selected metadata changes.
+    return rename_track_metadata(input_dir, report_path, subtitle_report_path, include_video, include_audio, include_subtitles, selected_file, default_audio)  # Apply selected metadata changes.
 
 
 def add_track_type_arguments(parser: argparse.ArgumentParser, include_video: bool) -> None:
@@ -769,6 +874,37 @@ def require_track_selection(parser: argparse.ArgumentParser, selection: TrackSel
         parser.error("Select at least one of --video, --audio, or --subtitles.")  # Exit with argument error.
 
 
+def add_default_audio_arguments(parser: argparse.ArgumentParser) -> None:
+    """
+    Add default-audio selection arguments to a parser.
+
+    :param parser: Argument parser.
+    :return: None.
+    """
+
+    parser.add_argument("--set-default-audio", action=argparse.BooleanOptionalAction, default=False, help="Opt in to audio flag-default edits; disabled by default and supports --no-set-default-audio.")  # Add opt-in default-audio flag.
+    parser.add_argument("--default-audio-language", default="English", help="Preferred default audio language; defaults to English and does not enable flag edits by itself.")  # Add default audio language option.
+
+
+def read_default_audio_config(parser: argparse.ArgumentParser, parsed_args: argparse.Namespace, selection: TrackSelection) -> DefaultAudioConfig:
+    """
+    Read and validate default-audio configuration.
+
+    :param parser: Argument parser.
+    :param parsed_args: Parsed CLI arguments.
+    :param selection: Track selection.
+    :return: Default-audio configuration.
+    """
+
+    requested_language = normalize_language_value(parsed_args.default_audio_language)  # Normalize requested language through shared aliases.
+    if requested_language == "":  # Verify requested language is supported.
+        parser.error(f"Unsupported default audio language: {parsed_args.default_audio_language}")  # Exit with argument error.
+    enabled = bool(parsed_args.set_default_audio)  # Read explicit opt-in state.
+    if enabled and not selection.audio:  # Verify audio processing is selected when default-audio edits are enabled.
+        parser.error("--set-default-audio requires --audio.")  # Exit with argument error.
+    return DefaultAudioConfig(enabled, requested_language)  # Return validated configuration.
+
+
 def build_rename_argument_parser() -> argparse.ArgumentParser:
     """
     Build the reviewed-report rename argument parser.
@@ -779,6 +915,7 @@ def build_rename_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Rename selected MKV track names from reviewed reports.")  # Create CLI parser.
     add_track_type_arguments(parser, True)  # Add video, audio, and subtitle selection flags.
     add_path_arguments(parser)  # Add shared path options.
+    add_default_audio_arguments(parser)  # Add optional default-audio flag controls.
     return parser  # Return configured parser.
 
 
@@ -792,6 +929,7 @@ def build_process_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate selected reports and rename selected MKV track names.")  # Create CLI parser.
     add_track_type_arguments(parser, True)  # Add video, audio, and subtitle selection flags.
     add_path_arguments(parser)  # Add shared path options.
+    add_default_audio_arguments(parser)  # Add optional default-audio flag controls.
     return parser  # Return configured parser.
 
 
@@ -807,7 +945,8 @@ def run_rename_cli(arguments: list[str] | None = None) -> int:
     parsed_args = parser.parse_args(arguments)  # Parse CLI arguments.
     selection = read_track_selection(parsed_args, True)  # Read selected track types.
     require_track_selection(parser, selection)  # Require explicit selection.
-    summary = rename_track_metadata(parsed_args.input_dir, Path(parsed_args.audio_report), Path(parsed_args.subtitle_report), selection.video, selection.audio, selection.subtitles, parsed_args.file)  # Run selected rename workflow.
+    default_audio = read_default_audio_config(parser, parsed_args, selection)  # Read default-audio configuration.
+    summary = rename_track_metadata(parsed_args.input_dir, Path(parsed_args.audio_report), Path(parsed_args.subtitle_report), selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio)  # Run selected rename workflow.
     return 1 if summary.failed > 0 else 0  # Return nonzero when workflow failed.
 
 
@@ -823,7 +962,8 @@ def run_process_cli(arguments: list[str] | None = None) -> int:
     parsed_args = parser.parse_args(arguments)  # Parse CLI arguments.
     selection = read_track_selection(parsed_args, True)  # Read selected track types.
     require_track_selection(parser, selection)  # Require explicit selection.
-    summary = process_track_metadata(parsed_args.input_dir, Path(parsed_args.audio_report), Path(parsed_args.subtitle_report), selection.video, selection.audio, selection.subtitles, parsed_args.file)  # Run integrated workflow.
+    default_audio = read_default_audio_config(parser, parsed_args, selection)  # Read default-audio configuration.
+    summary = process_track_metadata(parsed_args.input_dir, Path(parsed_args.audio_report), Path(parsed_args.subtitle_report), selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio)  # Run integrated workflow.
     return 1 if summary.failed > 0 else 0  # Return nonzero when workflow failed.
 
 
