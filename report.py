@@ -1,5 +1,5 @@
 """
-Generate an editable audio-track rename report for Matroska video files.
+Generate editable track-name rename reports for Matroska video files.
 """
 
 from __future__ import annotations  # Enable modern annotations on older supported Python versions.
@@ -16,14 +16,18 @@ from tqdm import tqdm  # Display report-generation progress.
 
 from audio_language_detector import detect_audio_track_language  # Resolve metadata or sampled audio language.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
+from subtitle_language_detector import detect_subtitle_track_language  # Resolve metadata or text subtitle language.
 
 
 INPUT_DIR = "E:/Movies/"  # Store default recursive input directory.
 REPORT_PATH = Path(__file__).with_name("report.json")  # Store report output beside this script.
+SUBTITLE_REPORT_PATH = Path(__file__).with_name("subtitles_report.json")  # Store subtitle report output beside this script.
 SUPPORTED_EXTENSIONS = (".mkv", ".mk3d")  # Limit edits to Matroska video containers supported by mkvpropedit.
 MISSING_TRACK_NAME = "<missing audio track name>"  # Display unnamed tracks without colliding with empty JSON keys.
+MISSING_SUBTITLE_TRACK_NAME = "<missing subtitle track name>"  # Display unnamed subtitle tracks without colliding with empty JSON keys.
 ESCAPED_TRACK_NAME_PREFIX = "\\"  # Escape literal marker-like track names in report group keys.
 OCCURRENCE_SUFFIX_PATTERN = re.compile(r"^(?P<path>.+) \[audio:(?P<audio>\d+)(?: track-id:(?P<track_id>[^\s\]]+))?(?: uid:(?P<uid>[^\]]+))?(?: stream:(?P<stream>[^\]]+))?\]$")  # Parse occurrence keys.
+SUBTITLE_OCCURRENCE_SUFFIX_PATTERN = re.compile(r"^(?P<path>.+) \[subtitle:(?P<subtitle>\d+)(?: track-id:(?P<track_id>[^\s\]]+))?(?: uid:(?P<uid>[^\]]+))?\]$")  # Parse subtitle occurrence keys.
 GROUP_KEY_PATTERN = re.compile(r"^(?P<name>.*) \((?P<count>\d+)\)$")  # Parse grouped current-name keys.
 
 
@@ -56,6 +60,23 @@ class VideoTrackRecord:
     current_name: str  # Store current video track name metadata.
 
 
+@dataclass(frozen=True)
+class SubtitleTrackRecord:
+    """
+    Stores one subtitle-track occurrence from one media file.
+    """
+
+    file_path: Path  # Store absolute file path.
+    relative_path: str  # Store path relative to INPUT_DIR.
+    subtitle_position: int  # Store zero-based subtitle stream position.
+    stream_index: int | None  # Store MKVToolNix track ID.
+    track_uid: int | None  # Store Matroska track UID.
+    current_name: str  # Store current subtitle track name metadata.
+    detected_language: str  # Store detected canonical language or empty text.
+    codec_id: str  # Store Matroska subtitle codec ID.
+    codec_name: str  # Store MKVToolNix subtitle codec name.
+
+
 def display_track_name(track_name: str) -> str:
     """
     Convert a raw track name into a stable report display value.
@@ -81,6 +102,37 @@ def raw_track_name(display_name: str) -> str:
     """
 
     if display_name == MISSING_TRACK_NAME:  # Verify whether report value means an empty track name.
+        return ""  # Return empty track name.
+    if display_name.startswith(ESCAPED_TRACK_NAME_PREFIX):  # Verify whether report value was escaped.
+        return display_name[1:]  # Return unescaped track name.
+    return display_name  # Return regular display value.
+
+
+def display_subtitle_track_name(track_name: str) -> str:
+    """
+    Convert a raw subtitle track name into a stable report display value.
+
+    :param track_name: Raw subtitle track name.
+    :return: Report display value.
+    """
+
+    normalized_name = track_name.strip()  # Normalize surrounding whitespace.
+    if normalized_name == "":  # Verify whether the track name is missing.
+        return MISSING_SUBTITLE_TRACK_NAME  # Return explicit missing-name marker.
+    if normalized_name == MISSING_SUBTITLE_TRACK_NAME or normalized_name.startswith(ESCAPED_TRACK_NAME_PREFIX):  # Verify whether the visible name needs escaping.
+        return f"{ESCAPED_TRACK_NAME_PREFIX}{normalized_name}"  # Return escaped visible track name.
+    return normalized_name  # Return visible track name.
+
+
+def raw_subtitle_track_name(display_name: str) -> str:
+    """
+    Convert a subtitle report display value back into a raw track name.
+
+    :param display_name: Subtitle report display value.
+    :return: Raw subtitle track name.
+    """
+
+    if display_name == MISSING_SUBTITLE_TRACK_NAME:  # Verify whether report value means an empty track name.
         return ""  # Return empty track name.
     if display_name.startswith(ESCAPED_TRACK_NAME_PREFIX):  # Verify whether report value was escaped.
         return display_name[1:]  # Return unescaped track name.
@@ -133,6 +185,40 @@ def parse_occurrence_key(occurrence_key: str) -> tuple[str, int, int | None, int
     track_id = int(raw_track_id) if raw_track_id is not None and raw_track_id.isdigit() else None  # Parse track ID when numeric.
     track_uid = int(raw_uid) if raw_uid is not None and raw_uid.isdigit() else None  # Parse track UID when numeric.
     return match.group("path"), audio_position, track_id, track_uid  # Return parsed occurrence identity.
+
+
+def build_subtitle_occurrence_key(track: SubtitleTrackRecord) -> str:
+    """
+    Build a unique editable key for one subtitle-track occurrence.
+
+    :param track: Subtitle track occurrence.
+    :return: Unique occurrence key.
+    """
+
+    track_id_label = str(track.stream_index) if track.stream_index is not None else "unknown"  # Build MKVToolNix track ID label.
+    uid_label = str(track.track_uid) if track.track_uid is not None else "unknown"  # Build Matroska track UID label.
+    return f"{track.relative_path} [subtitle:{track.subtitle_position + 1} track-id:{track_id_label} uid:{uid_label}]"  # Return path plus exact track identity.
+
+
+def parse_subtitle_occurrence_key(occurrence_key: str) -> tuple[str, int, int | None, int | None] | None:
+    """
+    Parse a subtitle report occurrence key into relative path and zero-based subtitle position.
+
+    :param occurrence_key: Subtitle report occurrence key.
+    :return: Relative path, zero-based subtitle position, track ID, and track UID, or None.
+    """
+
+    match = SUBTITLE_OCCURRENCE_SUFFIX_PATTERN.match(occurrence_key)  # Match occurrence suffix.
+    if match is None:  # Verify whether occurrence key has expected shape.
+        return None  # Return no parsed occurrence.
+    subtitle_position = int(match.group("subtitle")) - 1  # Convert one-based report ordinal to zero-based position.
+    if subtitle_position < 0:  # Verify parsed subtitle position is valid.
+        return None  # Return no parsed occurrence.
+    raw_track_id = match.group("track_id")  # Read track ID label.
+    raw_uid = match.group("uid")  # Read Matroska track UID label.
+    track_id = int(raw_track_id) if raw_track_id is not None and raw_track_id.isdigit() else None  # Parse track ID when numeric.
+    track_uid = int(raw_uid) if raw_uid is not None and raw_uid.isdigit() else None  # Parse track UID when numeric.
+    return match.group("path"), subtitle_position, track_id, track_uid  # Return parsed occurrence identity.
 
 
 def read_existing_desired_names(report_path: Path) -> dict[str, str]:
@@ -292,6 +378,26 @@ def read_mkvmerge_video_tracks(media_data: dict[str, Any]) -> list[dict[str, Any
     return video_tracks  # Return video tracks in MKVToolNix order.
 
 
+def read_mkvmerge_subtitle_tracks(media_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Read subtitle tracks in MKVToolNix track order.
+
+    :param media_data: mkvmerge media metadata.
+    :return: Subtitle track metadata objects.
+    """
+
+    raw_tracks = media_data.get("tracks")  # Read raw mkvmerge tracks.
+    tracks = raw_tracks if isinstance(raw_tracks, list) else []  # Normalize track list.
+    subtitle_tracks: list[dict[str, Any]] = []  # Store subtitle track objects.
+    for raw_track in tracks:  # Iterate mkvmerge tracks in reported order.
+        if not isinstance(raw_track, dict):  # Verify track object shape.
+            continue  # Skip invalid track.
+        if raw_track.get("type") != "subtitles":  # Verify track is subtitle.
+            continue  # Skip non-subtitle track.
+        subtitle_tracks.append(raw_track)  # Store subtitle track.
+    return subtitle_tracks  # Return subtitle tracks in MKVToolNix order.
+
+
 def read_mkvmerge_properties(track: dict[str, Any]) -> dict[str, Any]:
     """
     Read mkvmerge track properties.
@@ -343,6 +449,31 @@ def read_mkvmerge_track_uid(track: dict[str, Any]) -> int | None:
     properties = read_mkvmerge_properties(track)  # Read track properties.
     raw_uid = properties.get("uid")  # Read Matroska track UID.
     return raw_uid if isinstance(raw_uid, int) else None  # Return integer track UID.
+
+
+def read_mkvmerge_codec_id(track: dict[str, Any]) -> str:
+    """
+    Read Matroska codec ID from mkvmerge metadata.
+
+    :param track: mkvmerge track metadata.
+    :return: Codec ID or empty text.
+    """
+
+    properties = read_mkvmerge_properties(track)  # Read track properties.
+    raw_codec_id = properties.get("codec_id")  # Read codec ID.
+    return raw_codec_id if isinstance(raw_codec_id, str) else ""  # Return string codec ID.
+
+
+def read_mkvmerge_codec_name(track: dict[str, Any]) -> str:
+    """
+    Read MKVToolNix codec name from mkvmerge metadata.
+
+    :param track: mkvmerge track metadata.
+    :return: Codec name or empty text.
+    """
+
+    raw_codec = track.get("codec")  # Read codec display value.
+    return raw_codec if isinstance(raw_codec, str) else ""  # Return string codec name.
 
 
 def build_language_metadata_stream(track: dict[str, Any]) -> dict[str, Any]:
@@ -433,6 +564,36 @@ def read_video_tracks(file_path: Path, input_dir: Path) -> list[VideoTrackRecord
     return video_tracks  # Return video records.
 
 
+def read_subtitle_tracks(file_path: Path, input_dir: Path, detect_language: bool) -> list[SubtitleTrackRecord]:
+    """
+    Read subtitle-track records from one supported media file.
+
+    :param file_path: Media file path.
+    :param input_dir: Input directory path.
+    :param detect_language: Whether text fallback detection may run.
+    :return: Subtitle-track records.
+    """
+
+    ffprobe_data = probe_media(file_path)  # Read duration metadata from ffprobe.
+    mkvmerge_data = probe_mkvmerge(file_path)  # Read track order metadata from MKVToolNix.
+    mkvmerge_subtitle_tracks = read_mkvmerge_subtitle_tracks(mkvmerge_data)  # Read subtitle tracks in mkvpropedit selector order.
+    format_duration = read_format_duration(ffprobe_data)  # Read format duration.
+    subtitle_tracks: list[SubtitleTrackRecord] = []  # Store subtitle records.
+
+    for subtitle_position, track in enumerate(mkvmerge_subtitle_tracks):  # Iterate subtitle tracks in MKVToolNix order.
+        current_name = read_mkvmerge_track_name(track)  # Read current track name.
+        stream_index = read_mkvmerge_track_id(track)  # Read MKVToolNix track ID.
+        track_uid = read_mkvmerge_track_uid(track)  # Read Matroska track UID.
+        codec_id = read_mkvmerge_codec_id(track)  # Read subtitle codec ID.
+        codec_name = read_mkvmerge_codec_name(track)  # Read subtitle codec name.
+        metadata_stream = build_language_metadata_stream(track)  # Build language metadata from MKVToolNix properties.
+        detected_language = detect_subtitle_track_language(file_path, metadata_stream, stream_index, codec_id, codec_name, format_duration) if detect_language else ""  # Detect language when requested.
+        relative_path = file_path.relative_to(input_dir).as_posix()  # Build deterministic relative path.
+        subtitle_tracks.append(SubtitleTrackRecord(file_path, relative_path, subtitle_position, stream_index, track_uid, current_name, detected_language, codec_id, codec_name))  # Store track record.
+
+    return subtitle_tracks  # Return subtitle records.
+
+
 def collect_audio_tracks(input_dir: Path) -> list[AudioTrackRecord]:
     """
     Collect every audio-track occurrence under the input directory.
@@ -454,11 +615,32 @@ def collect_audio_tracks(input_dir: Path) -> list[AudioTrackRecord]:
     return tracks  # Return collected track records.
 
 
-def resolve_default_desired_name(tracks: list[AudioTrackRecord], existing_value: str | None) -> str:
+def collect_subtitle_tracks(input_dir: Path) -> list[SubtitleTrackRecord]:
+    """
+    Collect every subtitle-track occurrence under the input directory.
+
+    :param input_dir: Input directory path.
+    :return: Subtitle-track occurrence records.
+    """
+
+    tracks: list[SubtitleTrackRecord] = []  # Store all discovered subtitle tracks.
+    supported_files = discover_supported_files(input_dir)  # Discover supported Matroska files once.
+    with tqdm(supported_files, desc="Processing subtitle MKV", unit="file") as progress_bar:  # Build cleanup-managed progress bar.
+        for file_path in progress_bar:  # Iterate supported Matroska files with progress.
+            progress_bar.set_description(f"Processing subtitles: {file_path.name}")  # Show current MKV filename.
+            try:  # Inspect one file without stopping the full report.
+                tracks.extend(read_subtitle_tracks(file_path, input_dir, True))  # Add subtitle records with language detection.
+            except Exception as error:  # Handle unexpected per-file failures.
+                print(f"Skipping subtitle scan for {file_path}: {error}")  # Report skipped corrupt or unreadable file.
+
+    return tracks  # Return collected track records.
+
+
+def resolve_default_desired_name(tracks: list[Any], existing_value: str | None) -> str:
     """
     Resolve desired_new_name for one current-name group.
 
-    :param tracks: Audio tracks in the group.
+    :param tracks: Tracks in the group.
     :param existing_value: Existing desired value from a prior report.
     :return: Desired new name.
     """
@@ -501,6 +683,34 @@ def build_report_data(tracks: list[AudioTrackRecord], existing_desired_names: di
     return report_data  # Return deterministic report data.
 
 
+def build_subtitle_report_data(tracks: list[SubtitleTrackRecord], existing_desired_names: dict[str, str]) -> dict[str, dict[str, str]]:
+    """
+    Build deterministic human-editable subtitle report data.
+
+    :param tracks: Subtitle-track occurrence records.
+    :param existing_desired_names: Preserved desired names keyed by display track name.
+    :return: Subtitle report JSON data.
+    """
+
+    grouped_tracks: dict[str, list[SubtitleTrackRecord]] = {}  # Store tracks by current display name.
+    for track in tracks:  # Iterate collected tracks.
+        grouped_tracks.setdefault(display_subtitle_track_name(track.current_name), []).append(track)  # Add track to current-name group.
+
+    ordered_group_names = sorted(grouped_tracks, key=lambda name: (-len(grouped_tracks[name]), name.casefold()))  # Order groups by count then name.
+    report_data: dict[str, dict[str, str]] = {}  # Store final report object.
+
+    for display_name in ordered_group_names:  # Iterate ordered groups.
+        group_tracks = sorted(grouped_tracks[display_name], key=lambda track: (track.relative_path.casefold(), track.subtitle_position))  # Order occurrences deterministically.
+        group_key = f"{display_name} ({len(group_tracks)})"  # Build count-bearing group key.
+        existing_value = existing_desired_names.get(display_name)  # Read preserved desired value.
+        group_data: dict[str, str] = {"desired_new_name": resolve_default_desired_name(group_tracks, existing_value)}  # Initialize editable group data.
+        for track in group_tracks:  # Iterate group occurrences.
+            group_data[build_subtitle_occurrence_key(track)] = track.detected_language  # Store occurrence detected language.
+        report_data[group_key] = group_data  # Store completed group.
+
+    return report_data  # Return deterministic report data.
+
+
 def write_report(report_path: Path, report_data: dict[str, dict[str, str]]) -> None:
     """
     Write report JSON safely and atomically.
@@ -537,6 +747,28 @@ def generate_report(input_dir: str = INPUT_DIR, report_path: Path = REPORT_PATH)
     report_data = build_report_data(tracks, existing_desired_names)  # Build report JSON object.
     write_report(report_path, report_data)  # Write report safely.
     print(f"Report written: {report_path}")  # Report output path.
+    return report_data  # Return generated data.
+
+
+def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: Path = SUBTITLE_REPORT_PATH) -> dict[str, dict[str, str]]:
+    """
+    Generate subtitles_report.json from current embedded subtitle-track metadata.
+
+    :param input_dir: Input directory path string.
+    :param report_path: Output subtitle report path.
+    :return: Generated subtitle report data.
+    """
+
+    root_path = Path(input_dir)  # Resolve configured input directory path.
+    if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
+        print(f"Input directory not found: {root_path}")  # Report missing input directory.
+        return {}  # Return empty report data without writing stale content.
+
+    existing_desired_names = read_existing_desired_names(report_path)  # Preserve safe manual desired names.
+    tracks = collect_subtitle_tracks(root_path)  # Collect all embedded subtitle tracks.
+    report_data = build_subtitle_report_data(tracks, existing_desired_names)  # Build subtitle report JSON object.
+    write_report(report_path, report_data)  # Write subtitle report safely.
+    print(f"Subtitle report written: {report_path}")  # Report output path.
     return report_data  # Return generated data.
 
 
