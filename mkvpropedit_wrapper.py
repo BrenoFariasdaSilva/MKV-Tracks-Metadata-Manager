@@ -1,5 +1,5 @@
 """
-Isolated mkvpropedit interface for track name metadata edits.
+Isolated mkvpropedit interface for safe track metadata edits.
 """
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
@@ -12,14 +12,15 @@ import subprocess  # Run mkvpropedit safely with argument lists.
 
 
 @dataclass(frozen=True)
-class TrackNameEdit:
+class TrackMetadataEdit:
     """
-    Stores one intended track-name edit operation.
+    Stores one intended track metadata edit operation.
     """
 
     track_selector: str  # Store mkvpropedit track selector.
     current_name: str  # Store current track name before editing.
-    new_name: str  # Store target track name.
+    new_name: str | None = None  # Store target track name when selected.
+    default_flag: bool | None = None  # Store target default flag when selected.
 
 
 @dataclass(frozen=True)
@@ -108,31 +109,105 @@ def valid_track_selector(track_selector: str) -> bool:
     return False  # Return unsupported selector result.
 
 
-def build_mkvpropedit_arguments(file_path: Path, edits: list[TrackNameEdit], executable: str = "mkvpropedit") -> list[str]:
+def merge_track_metadata_edits(edits: list[TrackMetadataEdit]) -> list[TrackMetadataEdit]:
     """
-    Build a safe mkvpropedit argument list for track names only.
+    Merge compatible edits for the same track selector.
+
+    :param edits: Track metadata edit operations.
+    :return: Merged track metadata edit operations.
+    """
+
+    merged_edits: dict[str, TrackMetadataEdit] = {}  # Store merged operations by track selector.
+    for edit in edits:  # Iterate requested edits.
+        existing_edit = merged_edits.get(edit.track_selector)  # Read existing selector operation.
+        if existing_edit is None:  # Verify selector has no operation yet.
+            merged_edits[edit.track_selector] = edit  # Store first operation for selector.
+            continue  # Continue to next operation.
+
+        new_name = edit.new_name if edit.new_name is not None else existing_edit.new_name  # Prefer latest explicit name.
+        default_flag = edit.default_flag if edit.default_flag is not None else existing_edit.default_flag  # Prefer latest explicit default flag.
+        merged_edits[edit.track_selector] = TrackMetadataEdit(edit.track_selector, existing_edit.current_name, new_name, default_flag)  # Store merged selector operation.
+
+    return list(merged_edits.values())  # Return merged operations in insertion order.
+
+
+def append_name_setter(command: list[str], edit: TrackMetadataEdit) -> int:
+    """
+    Append one safe track-name setter when needed.
+
+    :param command: Mutable mkvpropedit command arguments.
+    :param edit: Track metadata edit operation.
+    :return: Number of appended setters.
+    """
+
+    target_name = valid_target_name(edit.new_name or "")  # Normalize target name.
+    if target_name == "" or target_name == edit.current_name:  # Verify name setter is necessary.
+        return 0  # Return no appended setter.
+    command.extend(["--set", f"name={target_name}"])  # Add name setter.
+    return 1  # Return appended setter count.
+
+
+def append_default_flag_setter(command: list[str], edit: TrackMetadataEdit) -> int:
+    """
+    Append one safe audio default-flag setter when needed.
+
+    :param command: Mutable mkvpropedit command arguments.
+    :param edit: Track metadata edit operation.
+    :return: Number of appended setters.
+    """
+
+    if edit.default_flag is None:  # Verify default flag setter was requested.
+        return 0  # Return no appended setter.
+    flag_value = "1" if edit.default_flag else "0"  # Convert boolean flag to mkvpropedit value.
+    command.extend(["--set", f"flag-default={flag_value}"])  # Add default-flag setter.
+    return 1  # Return appended setter count.
+
+
+def build_mkvpropedit_arguments(file_path: Path, edits: list[TrackMetadataEdit], executable: str = "mkvpropedit") -> list[str]:
+    """
+    Build a safe mkvpropedit argument list for permitted track metadata.
 
     :param file_path: Matroska file path.
-    :param edits: Track name edit operations.
+    :param edits: Track metadata edit operations.
     :param executable: mkvpropedit executable path or command name.
     :return: mkvpropedit command arguments.
     """
 
     command = [executable, str(file_path)]  # Start mkvpropedit command.
-    for edit in edits:  # Iterate requested edits.
-        target_name = valid_target_name(edit.new_name)  # Normalize target name.
-        if not valid_track_selector(edit.track_selector) or target_name == "" or target_name == edit.current_name:  # Verify this operation should be skipped.
+    for edit in merge_track_metadata_edits(edits):  # Iterate merged requested edits.
+        if not valid_track_selector(edit.track_selector):  # Verify selector is safe.
             continue  # Skip invalid or unnecessary operation.
-        command.extend(["--edit", edit.track_selector, "--set", f"name={target_name}"])  # Add name-only track edit.
+        edit_group = ["--edit", edit.track_selector]  # Start one track edit group.
+        setter_count = append_name_setter(edit_group, edit)  # Add name setter when needed.
+        setter_count += append_default_flag_setter(edit_group, edit)  # Add default-flag setter when needed.
+        if setter_count == 0:  # Verify group has at least one setter.
+            continue  # Skip no-op edit group.
+        command.extend(edit_group)  # Add complete track edit group.
     return command  # Return complete argument list.
 
 
-def command_sets_only_track_names(command: list[str]) -> bool:
+def valid_setter_argument(track_selector: str, setter_value: str) -> bool:
     """
-    Verify a generated mkvpropedit command edits only track-name metadata.
+    Verify whether one setter argument is explicitly permitted.
+
+    :param track_selector: mkvpropedit track selector.
+    :param setter_value: mkvpropedit setter value.
+    :return: True when setter is permitted.
+    """
+
+    if setter_value.startswith("name="):  # Verify track-name setter.
+        return True  # Accept track-name setter.
+    if setter_value in {"flag-default=0", "flag-default=1"} and (track_selector.startswith("track:a") or track_selector.startswith("track:=")):  # Verify audio default flag setter.
+        return True  # Accept default flag setter.
+    return False  # Reject every other property.
+
+
+def command_sets_only_permitted_track_metadata(command: list[str]) -> bool:
+    """
+    Verify a generated mkvpropedit command edits only permitted track metadata.
 
     :param command: Generated command arguments.
-    :return: True when command contains only file, edit selectors, and name setters.
+    :return: True when command contains only file, edit selectors, and permitted setters.
     """
 
     if len(command) < 2:  # Verify command has executable and file path.
@@ -147,21 +222,38 @@ def command_sets_only_track_names(command: list[str]) -> bool:
         track_selector = command[index + 1]  # Read track selector.
         if not valid_track_selector(track_selector):  # Verify supported track selector.
             return False  # Return invalid command result.
-        if command[index + 2] != "--set":  # Verify property setter flag.
+        index += 2  # Advance to first setter in this edit group.
+        setter_count = 0  # Count setters for this edit group.
+        while index < len(command) and command[index] == "--set":  # Iterate setters for current track.
+            if index + 1 >= len(command):  # Verify setter value exists.
+                return False  # Return invalid command result.
+            if not valid_setter_argument(track_selector, command[index + 1]):  # Verify setter property is permitted.
+                return False  # Return invalid command result.
+            setter_count += 1  # Count accepted setter.
+            index += 2  # Advance to next argument.
+        if setter_count == 0:  # Verify edit group changed something.
             return False  # Return invalid command result.
-        if not command[index + 3].startswith("name="):  # Verify only track name is set.
-            return False  # Return invalid command result.
-        index += 4  # Advance to next edit group.
 
-    return True  # Return valid name-only command result.
+    return True  # Return valid permitted-command result.
 
 
-def apply_track_name_edits(file_path: Path, edits: list[TrackNameEdit]) -> MkvpropeditResult:
+def count_requested_setters(command: list[str]) -> int:
     """
-    Apply track-name edits through mkvpropedit.
+    Count requested setter operations in one mkvpropedit command.
+
+    :param command: Generated command arguments.
+    :return: Number of setter operations.
+    """
+
+    return sum(1 for argument in command if argument == "--set")  # Count explicit setter flags.
+
+
+def apply_track_metadata_edits(file_path: Path, edits: list[TrackMetadataEdit]) -> MkvpropeditResult:
+    """
+    Apply permitted track metadata edits through mkvpropedit.
 
     :param file_path: Matroska file path.
-    :param edits: Track name edit operations.
+    :param edits: Track metadata edit operations.
     :return: mkvpropedit execution result.
     """
 
@@ -170,10 +262,10 @@ def apply_track_name_edits(file_path: Path, edits: list[TrackNameEdit]) -> Mkvpr
         return MkvpropeditResult(file_path, ["mkvpropedit", str(file_path)], 127, "", "mkvpropedit not found", 0, False, False)  # Return missing-tool failure.
 
     command = build_mkvpropedit_arguments(file_path, edits, executable)  # Build safe argument list.
-    changed_count = (len(command) - 2) // 4 if len(command) > 2 else 0  # Count edit groups.
+    changed_count = count_requested_setters(command)  # Count requested metadata setters.
     if changed_count == 0:  # Verify any actual edit remains.
-        return MkvpropeditResult(file_path, command, 0, "", "no track-name edits needed", 0, True, False)  # Return no-op success.
-    if not command_sets_only_track_names(command):  # Verify generated command scope.
+        return MkvpropeditResult(file_path, command, 0, "", "no track metadata edits needed", 0, True, False)  # Return no-op success.
+    if not command_sets_only_permitted_track_metadata(command):  # Verify generated command scope.
         return MkvpropeditResult(file_path, command, 2, "", "unsafe mkvpropedit command rejected", 0, False, False)  # Return rejected-command failure.
 
     try:  # Execute mkvpropedit.
