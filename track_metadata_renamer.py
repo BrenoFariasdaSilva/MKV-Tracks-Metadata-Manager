@@ -4,13 +4,15 @@ Rename Matroska video, audio, and embedded subtitle track name metadata safely.
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
 
+import argparse  # Parse command-line arguments.
 from dataclasses import dataclass, field  # Define typed workflow records.
 from pathlib import Path  # Represent filesystem paths.
 from typing import Any  # Type dynamic JSON data.
 import json  # Read report JSON.
+import sys  # Return meaningful CLI exit statuses.
 
 from mkvpropedit_wrapper import MkvpropeditResult, TrackNameEdit, apply_track_name_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
-from report import AUDIO_REPORT_PATH, INPUT_DIR, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, discover_supported_files, parse_group_key, parse_occurrence_key, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_subtitle_tracks, read_video_tracks  # Reuse report parsing and metadata inspection.
+from report import AUDIO_REPORT_PATH, INPUT_DIR, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, discover_supported_files, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_subtitle_tracks, read_video_tracks, resolve_selected_file  # Reuse report parsing and metadata inspection.
 
 
 @dataclass
@@ -25,6 +27,17 @@ class RenameSummary:
     skipped: int = 0  # Store skipped track count.
     failed: int = 0  # Store failed file or track count.
     messages: list[str] = field(default_factory=list)  # Store workflow messages.
+
+
+@dataclass(frozen=True)
+class TrackSelection:
+    """
+    Stores selected track-type workflow flags.
+    """
+
+    video: bool  # Store whether video track names are selected.
+    audio: bool  # Store whether audio track names are selected.
+    subtitles: bool  # Store whether embedded subtitle track names are selected.
 
 
 @dataclass(frozen=True)
@@ -398,23 +411,28 @@ def validate_subtitle_plans_for_file(file_path: Path, plans: list[PlannedSubtitl
     return operations  # Return validated operations.
 
 
-def collect_candidate_files(grouped_plans: dict[Path, list[PlannedRename]], grouped_subtitle_plans: dict[Path, list[PlannedSubtitleRename]], input_dir: Path) -> list[Path]:
+def collect_candidate_files(grouped_plans: dict[Path, list[PlannedRename]], grouped_subtitle_plans: dict[Path, list[PlannedSubtitleRename]], input_dir: Path, include_video: bool, selected_file: str | None = None) -> list[Path]:
     """
     Collect files eligible for video, audio, or subtitle name edits.
 
     :param grouped_plans: Planned audio renames keyed by file path.
     :param grouped_subtitle_plans: Planned subtitle renames keyed by file path.
     :param input_dir: Input directory path.
+    :param include_video: Whether deterministic video names should be planned.
+    :param selected_file: Optional exact selected file under the input directory.
     :return: Candidate file paths.
     """
 
-    candidate_paths = set(discover_supported_files(input_dir))  # Collect current Matroska files for deterministic video naming.
+    candidate_paths = set(discover_supported_files(input_dir, selected_file)) if include_video else set()  # Collect current Matroska files for deterministic video naming.
     candidate_paths.update(grouped_plans)  # Include report files that may need audio validation.
     candidate_paths.update(grouped_subtitle_plans)  # Include subtitle report files that may need validation.
+    if selected_file is not None:  # Verify whether exact single-file mode is active.
+        selected_path = resolve_selected_file(input_dir, selected_file)  # Resolve selected media file.
+        candidate_paths = {path for path in candidate_paths if selected_path is not None and path.resolve(strict=False) == selected_path.resolve(strict=False)}  # Keep only selected file.
     return sorted(candidate_paths, key=lambda path: path.as_posix().lower())  # Return deterministic file order.
 
 
-def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], grouped_subtitle_plans: dict[Path, list[PlannedSubtitleRename]], input_dir: Path, summary: RenameSummary, include_video: bool = True) -> list[MkvpropeditResult]:
+def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], grouped_subtitle_plans: dict[Path, list[PlannedSubtitleRename]], input_dir: Path, summary: RenameSummary, include_video: bool = True, selected_file: str | None = None) -> list[MkvpropeditResult]:
     """
     Apply validated renames one mkvpropedit invocation per file.
 
@@ -423,11 +441,12 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], groupe
     :param input_dir: Input directory path.
     :param summary: Mutable workflow summary.
     :param include_video: Whether deterministic video names should be applied.
+    :param selected_file: Optional exact selected file under the input directory.
     :return: mkvpropedit results.
     """
 
     results: list[MkvpropeditResult] = []  # Store mkvpropedit results.
-    candidate_files = collect_candidate_files(grouped_plans, grouped_subtitle_plans, input_dir)  # Collect video, audio, and subtitle candidate files.
+    candidate_files = collect_candidate_files(grouped_plans, grouped_subtitle_plans, input_dir, include_video, selected_file)  # Collect selected video, audio, and subtitle candidate files.
     current_supported_files = {path for path in candidate_files if path.exists() and path.suffix.lower() in SUPPORTED_EXTENSIONS}  # Collect current files for video naming eligibility.
     for file_path in candidate_files:  # Iterate files deterministically.
         operations: list[TrackNameEdit] = []  # Store combined file operations.
@@ -506,43 +525,112 @@ def collect_detected_plans_for_file(file_path: Path, input_dir: Path, summary: R
     return audio_plans, subtitle_plans  # Return detected plans.
 
 
-def collect_detected_plans(input_dir: Path, summary: RenameSummary) -> tuple[dict[Path, list[PlannedRename]], dict[Path, list[PlannedSubtitleRename]]]:
+def collect_detected_plans(input_dir: Path, summary: RenameSummary, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None) -> tuple[dict[Path, list[PlannedRename]], dict[Path, list[PlannedSubtitleRename]]]:
     """
     Collect automatic detected-language rename plans under the input directory.
 
     :param input_dir: Input directory path.
     :param summary: Mutable workflow summary.
+    :param include_audio: Whether audio tracks should be detected.
+    :param include_subtitles: Whether embedded subtitle tracks should be detected.
+    :param selected_file: Optional exact selected file under the input directory.
     :return: Audio and subtitle plans keyed by file path.
     """
 
     audio_plans: list[PlannedRename] = []  # Store all automatic audio plans.
     subtitle_plans: list[PlannedSubtitleRename] = []  # Store all automatic subtitle plans.
 
-    for file_path in discover_supported_files(input_dir):  # Iterate supported Matroska files.
-        file_audio_plans, file_subtitle_plans = collect_detected_plans_for_file(file_path, input_dir, summary)  # Collect detected plans for one file.
+    for file_path in discover_supported_files(input_dir, selected_file):  # Iterate supported Matroska files.
+        file_audio_plans, file_subtitle_plans = collect_detected_plans_for_file(file_path, input_dir, summary) if include_audio and include_subtitles else ([], [])  # Collect detected plans for one file when both language tracks are selected.
+        if include_audio and not include_subtitles:  # Verify only audio language tracks are selected.
+            file_audio_plans, file_subtitle_plans = collect_detected_audio_plans_for_file(file_path, input_dir, summary), []  # Collect only detected audio plans.
+        if include_subtitles and not include_audio:  # Verify only subtitle language tracks are selected.
+            file_audio_plans, file_subtitle_plans = [], collect_detected_subtitle_plans_for_file(file_path, input_dir, summary)  # Collect only detected subtitle plans.
         audio_plans.extend(file_audio_plans)  # Add file audio plans.
         subtitle_plans.extend(file_subtitle_plans)  # Add file subtitle plans.
 
     return group_plans_by_file(audio_plans), group_subtitle_plans_by_file(subtitle_plans)  # Return grouped detected plans.
 
 
-def rename_detected_track_metadata(input_dir: str = INPUT_DIR) -> RenameSummary:
+def collect_detected_audio_plans_for_file(file_path: Path, input_dir: Path, summary: RenameSummary) -> list[PlannedRename]:
+    """
+    Collect automatic detected-language audio rename plans for one file.
+
+    :param file_path: Media file path.
+    :param input_dir: Input directory path.
+    :param summary: Mutable workflow summary.
+    :return: Audio rename plans.
+    """
+
+    audio_plans: list[PlannedRename] = []  # Store automatic audio plans.
+    try:  # Read detected audio metadata.
+        audio_tracks = read_audio_tracks(file_path, input_dir, True)  # Inspect audio tracks with language detection.
+    except Exception as error:  # Handle corrupt or unreadable audio metadata.
+        summary.failed += 1  # Count audio inspection failure.
+        summary.messages.append(f"Automatic audio detection failed for {file_path}: {error}")  # Store failure reason.
+        return audio_plans  # Return no audio plans.
+
+    for track in audio_tracks:  # Iterate detected audio tracks.
+        target_name = valid_target_name(track.detected_language)  # Resolve detected audio target.
+        if target_name == "":  # Verify confident audio language exists.
+            summary.skipped += 1  # Count unknown-language skip.
+            summary.messages.append(f"Skipped unknown automatic audio target for: {track.relative_path} audio {track.audio_position + 1}")  # Store skip reason.
+            continue  # Skip unresolved target.
+        audio_plans.append(PlannedRename(track.file_path, track.relative_path, track.audio_position, track.stream_index, track.track_uid, track.current_name, target_name))  # Store detected audio plan.
+
+    return audio_plans  # Return audio plans.
+
+
+def collect_detected_subtitle_plans_for_file(file_path: Path, input_dir: Path, summary: RenameSummary) -> list[PlannedSubtitleRename]:
+    """
+    Collect automatic detected-language subtitle rename plans for one file.
+
+    :param file_path: Media file path.
+    :param input_dir: Input directory path.
+    :param summary: Mutable workflow summary.
+    :return: Subtitle rename plans.
+    """
+
+    subtitle_plans: list[PlannedSubtitleRename] = []  # Store automatic subtitle plans.
+    try:  # Read detected subtitle metadata.
+        subtitle_tracks = read_subtitle_tracks(file_path, input_dir, True)  # Inspect embedded subtitle tracks with language detection.
+    except Exception as error:  # Handle corrupt or unreadable subtitle metadata.
+        summary.failed += 1  # Count subtitle inspection failure.
+        summary.messages.append(f"Automatic subtitle detection failed for {file_path}: {error}")  # Store failure reason.
+        return subtitle_plans  # Return no subtitle plans.
+
+    for track in subtitle_tracks:  # Iterate detected subtitle tracks.
+        target_name = valid_target_name(track.detected_language)  # Resolve detected subtitle target.
+        if target_name == "":  # Verify confident subtitle language exists.
+            summary.skipped += 1  # Count unknown-language skip.
+            summary.messages.append(f"Skipped unknown automatic subtitle target for: {track.relative_path} subtitle {track.subtitle_position + 1}")  # Store skip reason.
+            continue  # Skip unresolved target.
+        subtitle_plans.append(PlannedSubtitleRename(track.file_path, track.relative_path, track.subtitle_position, track.stream_index, track.track_uid, track.current_name, target_name))  # Store detected subtitle plan.
+
+    return subtitle_plans  # Return subtitle plans.
+
+
+def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None) -> RenameSummary:
     """
     Automatically detect languages and rename video, audio, and subtitle track names.
 
     :param input_dir: Input directory path string.
+    :param include_video: Whether video track names should be processed.
+    :param include_audio: Whether audio track names should be processed.
+    :param include_subtitles: Whether embedded subtitle track names should be processed.
+    :param selected_file: Optional exact selected file under the input directory.
     :return: Rename workflow summary.
     """
 
     summary = RenameSummary()  # Initialize workflow summary.
-    root_path = Path(input_dir)  # Resolve configured input directory.
+    root_path = Path(input_dir).resolve(strict=False)  # Resolve configured input directory.
     if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
         print(f"Input directory not found: {root_path}")  # Report missing input directory.
         summary.failed += 1  # Count missing input as failure.
         return summary  # Return summary.
 
-    grouped_plans, grouped_subtitle_plans = collect_detected_plans(root_path, summary)  # Collect automatic detected plans.
-    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary)  # Apply validated rename operations.
+    grouped_plans, grouped_subtitle_plans = collect_detected_plans(root_path, summary, include_audio, include_subtitles, selected_file)  # Collect automatic detected plans.
+    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file)  # Apply validated rename operations.
 
     print(f"Summary: planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
     for message in summary.messages:  # Iterate accumulated messages.
@@ -551,40 +639,192 @@ def rename_detected_track_metadata(input_dir: str = INPUT_DIR) -> RenameSummary:
     return summary  # Return workflow summary.
 
 
-def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, subtitle_report_path: Path = SUBTITLE_REPORT_PATH) -> RenameSummary:
+def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, subtitle_report_path: Path = SUBTITLE_REPORT_PATH, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None) -> RenameSummary:
     """
     Rename deterministic video names plus report-driven audio and subtitle names.
 
     :param input_dir: Input directory path string.
     :param report_path: Audio report JSON path.
     :param subtitle_report_path: Subtitle report JSON path.
+    :param include_video: Whether video track names should be processed.
+    :param include_audio: Whether audio track names should be processed.
+    :param include_subtitles: Whether embedded subtitle track names should be processed.
+    :param selected_file: Optional exact selected file under the input directory.
     :return: Rename workflow summary.
     """
 
     summary = RenameSummary()  # Initialize workflow summary.
-    root_path = Path(input_dir)  # Resolve configured input directory.
+    root_path = Path(input_dir).resolve(strict=False)  # Resolve configured input directory.
     if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
         print(f"Input directory not found: {root_path}")  # Report missing input directory.
         summary.failed += 1  # Count missing input as failure.
         return summary  # Return summary.
 
-    report_data = load_report_data(report_path)  # Load report JSON.
-    if report_data is None:  # Verify report loaded.
+    report_data = load_report_data(report_path) if include_audio else {}  # Load audio report only when selected.
+    if report_data is None:  # Verify required audio report loaded.
         summary.failed += 1  # Count missing or malformed report.
         return summary  # Return summary.
 
-    planned_renames = collect_planned_renames(report_data, root_path, summary)  # Collect report rename requests.
+    planned_renames = collect_planned_renames(report_data, root_path, summary) if include_audio else []  # Collect selected audio rename requests.
     grouped_plans = group_plans_by_file(planned_renames)  # Group plans by media file.
-    subtitle_report_data = load_optional_report_data(subtitle_report_path)  # Load optional subtitle report JSON.
-    planned_subtitle_renames = collect_planned_subtitle_renames(subtitle_report_data, root_path, summary)  # Collect subtitle report rename requests.
+    subtitle_report_data = load_report_data(subtitle_report_path) if include_subtitles else {}  # Load subtitle report only when selected.
+    if subtitle_report_data is None:  # Verify required subtitle report loaded.
+        summary.failed += 1  # Count missing or malformed report.
+        return summary  # Return summary.
+    planned_subtitle_renames = collect_planned_subtitle_renames(subtitle_report_data, root_path, summary) if include_subtitles else []  # Collect selected subtitle rename requests.
     grouped_subtitle_plans = group_subtitle_plans_by_file(planned_subtitle_renames)  # Group subtitle plans by media file.
-    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary)  # Apply validated rename operations.
+    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file)  # Apply validated rename operations.
 
     print(f"Summary: planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
     for message in summary.messages:  # Iterate accumulated messages.
         print(message)  # Report detailed message.
 
     return summary  # Return workflow summary.
+
+
+def process_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, subtitle_report_path: Path = SUBTITLE_REPORT_PATH, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None) -> RenameSummary:
+    """
+    Generate selected reports and apply selected track-name metadata changes.
+
+    :param input_dir: Input directory path string.
+    :param report_path: Audio report JSON path.
+    :param subtitle_report_path: Subtitle report JSON path.
+    :param include_video: Whether video track names should be processed.
+    :param include_audio: Whether audio track names should be processed.
+    :param include_subtitles: Whether embedded subtitle track names should be processed.
+    :param selected_file: Optional exact selected file under the input directory.
+    :return: Rename workflow summary.
+    """
+
+    summary = RenameSummary()  # Initialize workflow summary.
+    root_path = Path(input_dir).resolve(strict=False)  # Resolve configured input directory.
+    if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
+        print(f"Input directory not found: {root_path}")  # Report missing input directory.
+        summary.failed += 1  # Count missing input as failure.
+        return summary  # Return summary.
+    if selected_file is not None and resolve_selected_file(root_path, selected_file) is None:  # Verify exact selected file can be processed.
+        summary.failed += 1  # Count invalid file selection.
+        return summary  # Return summary.
+
+    if include_audio:  # Verify audio processing was selected.
+        generate_audio_report(input_dir, report_path, selected_file)  # Generate selected audio report.
+    if include_subtitles:  # Verify subtitle processing was selected.
+        generate_subtitle_report(input_dir, subtitle_report_path, selected_file)  # Generate selected subtitle report.
+
+    return rename_track_metadata(input_dir, report_path, subtitle_report_path, include_video, include_audio, include_subtitles, selected_file)  # Apply selected metadata changes.
+
+
+def add_track_type_arguments(parser: argparse.ArgumentParser, include_video: bool) -> None:
+    """
+    Add track-type selection arguments to a parser.
+
+    :param parser: Argument parser.
+    :param include_video: Whether video selection should be accepted.
+    :return: None.
+    """
+
+    if include_video:  # Verify video flag belongs to this command.
+        parser.add_argument("--video", action="store_true", help="Process video track names from MKV filename stems.")  # Add video selection flag.
+    parser.add_argument("--audio", action="store_true", help="Process audio track names from detected or reviewed languages.")  # Add audio selection flag.
+    parser.add_argument("--subtitles", action="store_true", help="Process embedded subtitle track names from detected or reviewed languages.")  # Add subtitle selection flag.
+
+
+def add_path_arguments(parser: argparse.ArgumentParser) -> None:
+    """
+    Add shared path arguments to a parser.
+
+    :param parser: Argument parser.
+    :return: None.
+    """
+
+    parser.add_argument("--input-dir", default=INPUT_DIR, help="Input directory containing Matroska files.")  # Add input directory option.
+    parser.add_argument("--audio-report", default=str(AUDIO_REPORT_PATH), help="Audio report JSON path.")  # Add audio report path option.
+    parser.add_argument("--subtitle-report", default=str(SUBTITLE_REPORT_PATH), help="Subtitle report JSON path.")  # Add subtitle report path option.
+    parser.add_argument("--file", default=None, help="Exact relative or absolute MKV file under input directory.")  # Add single-file option.
+
+
+def read_track_selection(parsed_args: argparse.Namespace, include_video: bool) -> TrackSelection:
+    """
+    Read track selection from parsed arguments.
+
+    :param parsed_args: Parsed CLI arguments.
+    :param include_video: Whether parsed arguments include video selection.
+    :return: Track selection.
+    """
+
+    video_selected = bool(getattr(parsed_args, "video", False)) if include_video else False  # Read video flag when present.
+    return TrackSelection(video_selected, bool(parsed_args.audio), bool(parsed_args.subtitles))  # Return selected track flags.
+
+
+def require_track_selection(parser: argparse.ArgumentParser, selection: TrackSelection) -> None:
+    """
+    Require at least one selected track type.
+
+    :param parser: Argument parser.
+    :param selection: Track selection.
+    :return: None.
+    """
+
+    if not selection.video and not selection.audio and not selection.subtitles:  # Verify at least one track type was selected.
+        parser.error("Select at least one of --video, --audio, or --subtitles.")  # Exit with argument error.
+
+
+def build_rename_argument_parser() -> argparse.ArgumentParser:
+    """
+    Build the reviewed-report rename argument parser.
+
+    :return: Argument parser.
+    """
+
+    parser = argparse.ArgumentParser(description="Rename selected MKV track names from reviewed reports.")  # Create CLI parser.
+    add_track_type_arguments(parser, True)  # Add video, audio, and subtitle selection flags.
+    add_path_arguments(parser)  # Add shared path options.
+    return parser  # Return configured parser.
+
+
+def build_process_argument_parser() -> argparse.ArgumentParser:
+    """
+    Build the integrated process argument parser.
+
+    :return: Argument parser.
+    """
+
+    parser = argparse.ArgumentParser(description="Generate selected reports and rename selected MKV track names.")  # Create CLI parser.
+    add_track_type_arguments(parser, True)  # Add video, audio, and subtitle selection flags.
+    add_path_arguments(parser)  # Add shared path options.
+    return parser  # Return configured parser.
+
+
+def run_rename_cli(arguments: list[str] | None = None) -> int:
+    """
+    Run the reviewed-report rename CLI.
+
+    :param arguments: Optional argument list.
+    :return: Process exit status.
+    """
+
+    parser = build_rename_argument_parser()  # Build CLI parser.
+    parsed_args = parser.parse_args(arguments)  # Parse CLI arguments.
+    selection = read_track_selection(parsed_args, True)  # Read selected track types.
+    require_track_selection(parser, selection)  # Require explicit selection.
+    summary = rename_track_metadata(parsed_args.input_dir, Path(parsed_args.audio_report), Path(parsed_args.subtitle_report), selection.video, selection.audio, selection.subtitles, parsed_args.file)  # Run selected rename workflow.
+    return 1 if summary.failed > 0 else 0  # Return nonzero when workflow failed.
+
+
+def run_process_cli(arguments: list[str] | None = None) -> int:
+    """
+    Run the integrated report-and-rename CLI.
+
+    :param arguments: Optional argument list.
+    :return: Process exit status.
+    """
+
+    parser = build_process_argument_parser()  # Build CLI parser.
+    parsed_args = parser.parse_args(arguments)  # Parse CLI arguments.
+    selection = read_track_selection(parsed_args, True)  # Read selected track types.
+    require_track_selection(parser, selection)  # Require explicit selection.
+    summary = process_track_metadata(parsed_args.input_dir, Path(parsed_args.audio_report), Path(parsed_args.subtitle_report), selection.video, selection.audio, selection.subtitles, parsed_args.file)  # Run integrated workflow.
+    return 1 if summary.failed > 0 else 0  # Return nonzero when workflow failed.
 
 
 def rename_subtitle_tracks(input_dir: str = INPUT_DIR, subtitle_report_path: Path = SUBTITLE_REPORT_PATH) -> RenameSummary:
@@ -597,7 +837,7 @@ def rename_subtitle_tracks(input_dir: str = INPUT_DIR, subtitle_report_path: Pat
     """
 
     summary = RenameSummary()  # Initialize workflow summary.
-    root_path = Path(input_dir)  # Resolve configured input directory.
+    root_path = Path(input_dir).resolve(strict=False)  # Resolve configured input directory.
     if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
         print(f"Input directory not found: {root_path}")  # Report missing input directory.
         summary.failed += 1  # Count missing input as failure.
@@ -626,7 +866,7 @@ def main() -> None:
     :return: None.
     """
 
-    rename_track_metadata()  # Rename tracks using default configuration.
+    sys.exit(run_rename_cli())  # Run CLI and return process status.
 
 
 if __name__ == "__main__":  # Run script entry point when executed directly.
