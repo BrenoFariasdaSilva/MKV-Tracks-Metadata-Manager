@@ -882,8 +882,8 @@ def add_default_audio_arguments(parser: argparse.ArgumentParser) -> None:
     :return: None.
     """
 
-    parser.add_argument("--set-default-audio", action=argparse.BooleanOptionalAction, default=False, help="Opt in to audio flag-default edits; disabled by default and supports --no-set-default-audio.")  # Add opt-in default-audio flag.
-    parser.add_argument("--default-audio-language", default="English", help="Preferred default audio language; defaults to English and does not enable flag edits by itself.")  # Add default audio language option.
+    parser.add_argument("--set-default-audio", action=argparse.BooleanOptionalAction, default=None, help="Control audio flag-default edits; enabled by default when --audio is selected, and supports --no-set-default-audio.")  # Add default-audio flag control.
+    parser.add_argument("--default-audio-language", default="English", help="Preferred default audio language; defaults to English.")  # Add default audio language option.
 
 
 def read_default_audio_config(parser: argparse.ArgumentParser, parsed_args: argparse.Namespace, selection: TrackSelection) -> DefaultAudioConfig:
@@ -899,7 +899,7 @@ def read_default_audio_config(parser: argparse.ArgumentParser, parsed_args: argp
     requested_language = normalize_language_value(parsed_args.default_audio_language)  # Normalize requested language through shared aliases.
     if requested_language == "":  # Verify requested language is supported.
         parser.error(f"Unsupported default audio language: {parsed_args.default_audio_language}")  # Exit with argument error.
-    enabled = bool(parsed_args.set_default_audio)  # Read explicit opt-in state.
+    enabled = selection.audio if parsed_args.set_default_audio is None else bool(parsed_args.set_default_audio)  # Resolve default-audio state.
     if enabled and not selection.audio:  # Verify audio processing is selected when default-audio edits are enabled.
         parser.error("--set-default-audio requires --audio.")  # Exit with argument error.
     return DefaultAudioConfig(enabled, requested_language)  # Return validated configuration.
