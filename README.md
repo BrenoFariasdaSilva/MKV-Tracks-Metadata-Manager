@@ -8,7 +8,7 @@
   
 ---
 
-Metadata-only Matroska track-name renamer that generates a human-editable audio report, sets the video track name from the filename, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
+Metadata-only Matroska track-name renamer that generates human-editable audio and embedded-subtitle reports, sets the video track name from the filename, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
 
 ---
 
@@ -34,6 +34,7 @@ Metadata-only Matroska track-name renamer that generates a human-editable audio 
 		- [macOS](#macos)
 	- [Run Python Code:](#run-python-code)
 		- [Generate report.json](#generate-reportjson)
+		- [Generate subtitles_report.json](#generate-subtitles_reportjson)
 		- [Review desired_new_name](#review-desired_new_name)
 		- [Rename video and audio track metadata](#rename-video-and-audio-track-metadata)
 		- [Direct Python execution](#direct-python-execution)
@@ -45,7 +46,7 @@ Metadata-only Matroska track-name renamer that generates a human-editable audio 
 
 ## Introduction
 
-Video Audio Tracks Renamer recursively scans the configured input directory for Matroska video files and collects every audio-track occurrence into `report.json`.
+Video Audio Tracks Renamer recursively scans the configured input directory for Matroska video files and collects every audio-track occurrence into `report.json`. Embedded subtitle tracks are collected separately into `subtitles_report.json`.
 
 The default input directory is:
 
@@ -60,9 +61,11 @@ Supported extensions are:
 .mk3d
 ```
 
-The project renames only track name metadata. The actual file modification is performed by `mkvpropedit`, which edits Matroska metadata in place. The implementation sets one ordinary video track name to the MKV filename stem and applies report-driven audio names. It does not re-encode, remux, remove streams, reorder tracks, change default flags, change forced flags, change language metadata, alter subtitles, alter chapters, alter attachments, or modify audio/video contents.
+The project renames only track name metadata. The actual file modification is performed by `mkvpropedit`, which edits Matroska metadata in place. The implementation sets one ordinary video track name to the MKV filename stem and applies report-driven audio and embedded-subtitle names. It does not re-encode, remux, remove streams, reorder tracks, change default flags, change forced flags, change language metadata, alter subtitles, alter chapters, alter attachments, or modify audio/video contents.
 
-Language resolution prefers metadata first. When metadata cannot determine a language, the fallback path extracts short temporary samples from multiple intermediate portions of the specific audio stream, analyzes them with Whisper, aggregates the sample results conservatively, and leaves the language unknown when confidence is insufficient or samples conflict. Temporary samples are created only for analysis and are cleaned up automatically.
+Language resolution prefers metadata first. Audio fallback extracts short temporary samples from multiple intermediate portions of the specific audio stream, analyzes them with Whisper, aggregates the sample results conservatively, and leaves the language unknown when confidence is insufficient or samples conflict. Embedded text subtitle fallback extracts the specific subtitle track to a temporary file, reads cues from multiple intermediate timeline regions, detects text language with `langdetect`, aggregates conservatively, and leaves the language unknown when evidence is weak or conflicting. Image-based subtitles use metadata only. Temporary files are created only for analysis and are cleaned up automatically.
+
+External subtitle files such as `.srt`, `.ass`, `.ssa`, `.vtt`, `.sub`, and `.idx` are ignored.
 
 ## Setup
 
@@ -75,8 +78,8 @@ cd "Video Audio Tracks Renamer"
 The intended workflow is:
 
 1. Install dependencies.
-2. Generate `report.json`.
-3. Review and edit `desired_new_name`.
+2. Generate `report.json` and `subtitles_report.json`.
+3. Review and edit `desired_new_name` values.
 4. Execute renaming.
 
 ## Installation:
@@ -135,9 +138,33 @@ Each occurrence key includes the relative file path, the audio ordinal, the MKVT
 }
 ```
 
+### Generate subtitles_report.json
+
+```bash
+make subtitle_report
+```
+
+or generate both reports:
+
+```bash
+make reports
+```
+
+`subtitles_report.json` groups embedded subtitle-track occurrences by current subtitle-track name and occurrence count:
+
+```json
+{
+    "<missing subtitle track name> (2)": {
+        "desired_new_name": "",
+        "Movie.mkv [subtitle:1 track-id:4 uid:123456789]": "Portuguese",
+        "Movie.mkv [subtitle:2 track-id:5 uid:987654321]": "English"
+    }
+}
+```
+
 ### Review desired_new_name
 
-Edit `report.json` before renaming.
+Edit `report.json` and `subtitles_report.json` before renaming.
 
 If `desired_new_name` is non-empty, every occurrence in that group uses that value as the target name.
 
@@ -151,7 +178,13 @@ When regenerating `report.json`, existing manual `desired_new_name` values are p
 make rename
 ```
 
-This runs `audio_tracks_renamer.py`, consumes `report.json`, re-probes each file, sets the single video track name to the exact filename stem, verifies each audio track still matches the report, and applies one `mkvpropedit` invocation per file when one or more track names need renaming.
+This runs `audio_tracks_renamer.py`, consumes `report.json` and optional `subtitles_report.json`, re-probes each file, sets the single video track name to the exact filename stem, verifies each audio/subtitle track still matches its report, and applies one `mkvpropedit` invocation per file when one or more track names need renaming.
+
+Subtitle-only renaming is available with:
+
+```bash
+make rename_subtitles
+```
 
 For example:
 
@@ -178,13 +211,16 @@ When a Track UID is unavailable, the implementation falls back to the MKVToolNix
 ```bash
 mkvpropedit FILE --edit track:aN --set name=NEW_NAME
 mkvpropedit FILE --edit track:vN --set name=NEW_NAME
+mkvpropedit FILE --edit track:sN --set name=NEW_NAME
 ```
 
 ### Direct Python execution
 
 ```bash
 python report.py
+python subtitle_report.py
 python audio_tracks_renamer.py
+python subtitle_tracks_renamer.py
 ```
 
 ### Dependencies
@@ -219,18 +255,21 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 ## Project Structure
 
 - [report.py](report.py): Recursively inspects supported Matroska files under `INPUT_DIR`, detects audio languages, preserves manual report values, and writes `report.json` safely.
-- [audio_tracks_renamer.py](audio_tracks_renamer.py): Reads `report.json`, resolves audio target names, resolves video target names from filename stems, validates current file metadata, skips unsafe entries, and applies renames.
+- [subtitle_report.py](subtitle_report.py): Generates `subtitles_report.json` for embedded subtitle tracks.
+- [audio_tracks_renamer.py](audio_tracks_renamer.py): Reads `report.json` and optional `subtitles_report.json`, resolves audio/subtitle target names, resolves video target names from filename stems, validates current file metadata, skips unsafe entries, and applies renames.
+- [subtitle_tracks_renamer.py](subtitle_tracks_renamer.py): Applies embedded subtitle-track renames from `subtitles_report.json` only.
 - [audio_language_detector.py](audio_language_detector.py): Resolves language from metadata first, then uses distributed temporary audio samples with Whisper only when needed.
-- [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio track `name=` metadata only.
+- [subtitle_language_detector.py](subtitle_language_detector.py): Resolves embedded subtitle language from metadata first, then text subtitle content when available.
+- [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio/subtitle track `name=` metadata only.
 - [install_windows.bat](install_windows.bat): Windows dependency installer.
 - [install_linux.sh](install_linux.sh): Linux dependency installer.
 - [install_macos.sh](install_macos.sh): macOS dependency installer.
-- [Makefile](Makefile): Provides `install`, `report`, `rename`, `run`, `dependencies`, `generate_requirements`, and `clean` targets.
+- [Makefile](Makefile): Provides `install`, `report`, `subtitle_report`, `reports`, `rename`, `rename_subtitles`, `run`, `dependencies`, `generate_requirements`, and `clean` targets.
 - [requirements.txt](requirements.txt): Python dependency list.
 
 ## Safety Notes
 
-This utility modifies Matroska files in place. Review `report.json` carefully before running `make rename`.
+This utility modifies Matroska files in place. Review `report.json` and `subtitles_report.json` carefully before running `make rename`.
 
 The implementation skips files or tracks safely when:
 
@@ -240,6 +279,7 @@ The implementation skips files or tracks safely when:
 - A file is unsupported, corrupt, or has no audio tracks.
 - A file has multiple video tracks and the video target is ambiguous.
 - A track has no target name and no detected language.
+- An image-based subtitle track has no reliable language metadata.
 - The current track name, track ID, or Track UID no longer matches the report.
 - `ffprobe`, `mkvmerge`, `ffmpeg`, or `mkvpropedit` is unavailable.
 - `mkvpropedit` returns an error for one file.
