@@ -31,7 +31,7 @@ LANGUAGE_ALIASES = {
     "Italian": ("it", "ita", "italian", "italiano"),
     "Japanese": ("ja", "jpn", "japanese", "nihongo"),
     "Korean": ("ko", "kor", "korean"),
-    "Chinese": ("zh", "zho", "chi", "chinese", "mandarin", "cantonese"),
+    "Chinese": ("zh", "zh-cn", "zh-tw", "zh-hans", "zh-hant", "zho", "chi", "chinese", "mandarin", "cantonese"),
     "Russian": ("ru", "rus", "russian"),
     "Hindi": ("hi", "hin", "hindi"),
 }  # Store common canonical language aliases.
