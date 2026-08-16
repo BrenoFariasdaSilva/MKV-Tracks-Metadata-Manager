@@ -46,6 +46,7 @@ class AudioTrackRecord:
     track_uid: int | None  # Store Matroska track UID.
     current_name: str  # Store current audio track name metadata.
     detected_language: str  # Store detected canonical language or empty text.
+    default_track: bool  # Store current audio default-track flag.
 
 
 @dataclass(frozen=True)
@@ -489,6 +490,19 @@ def read_mkvmerge_track_uid(track: dict[str, Any]) -> int | None:
     return raw_uid if isinstance(raw_uid, int) else None  # Return integer track UID.
 
 
+def read_mkvmerge_default_track(track: dict[str, Any]) -> bool:
+    """
+    Read the Matroska default-track flag from mkvmerge metadata.
+
+    :param track: mkvmerge track metadata.
+    :return: True when track currently has default flag enabled.
+    """
+
+    properties = read_mkvmerge_properties(track)  # Read track properties.
+    raw_default = properties.get("default_track")  # Read MKVToolNix default-track property.
+    return bool(raw_default) if isinstance(raw_default, bool) else False  # Return normalized default flag.
+
+
 def read_mkvmerge_codec_id(track: dict[str, Any]) -> str:
     """
     Read Matroska codec ID from mkvmerge metadata.
@@ -570,11 +584,12 @@ def read_audio_tracks(file_path: Path, input_dir: Path, detect_language: bool) -
         current_name = read_mkvmerge_track_name(track)  # Read current track name.
         stream_index = read_mkvmerge_track_id(track)  # Read MKVToolNix track ID.
         track_uid = read_mkvmerge_track_uid(track)  # Read Matroska track UID.
+        default_track = read_mkvmerge_default_track(track)  # Read current default-track flag.
         duration = format_duration  # Use format duration for distributed sample placement.
         metadata_stream = build_language_metadata_stream(track)  # Build language metadata from MKVToolNix properties.
         detected_language = detect_audio_track_language(file_path, metadata_stream, audio_position, duration) if detect_language else ""  # Detect language when requested.
         relative_path = file_path.relative_to(input_dir).as_posix()  # Build deterministic relative path.
-        audio_tracks.append(AudioTrackRecord(file_path, relative_path, audio_position, stream_index, track_uid, current_name, detected_language))  # Store track record.
+        audio_tracks.append(AudioTrackRecord(file_path, relative_path, audio_position, stream_index, track_uid, current_name, detected_language, default_track))  # Store track record.
 
     return audio_tracks  # Return audio records.
 
