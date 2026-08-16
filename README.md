@@ -8,7 +8,7 @@
   
 ---
 
-Metadata-only Matroska track-name renamer that generates human-editable audio and embedded-subtitle reports, sets the video track name from the filename, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
+Metadata-only Matroska track metadata renamer that generates human-editable audio and embedded-subtitle reports, sets the video track name from the filename, can opt in to selecting one default audio language, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
 
 ---
 
@@ -37,6 +37,7 @@ Metadata-only Matroska track-name renamer that generates human-editable audio an
 		- [Generate reports](#generate-reports)
 		- [Review desired_new_name](#review-desired_new_name)
 		- [Rename from reviewed reports](#rename-from-reviewed-reports)
+		- [Default audio selection](#default-audio-selection)
 		- [Integrated process workflow](#integrated-process-workflow)
 		- [Direct Python execution](#direct-python-execution)
 		- [Dependencies](#dependencies)
@@ -62,7 +63,7 @@ Supported extensions are:
 .mk3d
 ```
 
-The project renames only track name metadata. The actual file modification is performed by `mkvpropedit`, which edits Matroska metadata in place. The implementation sets one ordinary video track name to the MKV filename stem and applies report-driven audio and embedded-subtitle names. It does not re-encode, remux, remove streams, reorder tracks, change default flags, change forced flags, change language metadata, alter subtitles, alter chapters, alter attachments, or modify audio/video contents.
+The project modifies only explicitly selected track metadata. The actual file modification is performed by `mkvpropedit`, which edits Matroska metadata in place. The implementation sets one ordinary video track name to the MKV filename stem, applies report-driven audio and embedded-subtitle names, and can optionally set audio `flag-default` values. It does not re-encode, remux, remove streams, reorder tracks, change forced flags, change language metadata, alter subtitles, alter chapters, alter attachments, or modify audio/video contents.
 
 Language resolution prefers metadata first. Audio fallback extracts short temporary samples from multiple intermediate portions of the specific audio stream, analyzes them with Whisper, aggregates the sample results conservatively, and leaves the language unknown when confidence is insufficient or samples conflict. Embedded text subtitle fallback extracts the specific subtitle track to a temporary file, reads cues from multiple intermediate timeline regions, detects text language with `langdetect`, aggregates conservatively, and leaves the language unknown when evidence is weak or conflicting. Image-based subtitles use metadata only. Temporary files are created only for analysis and are cleaned up automatically.
 
@@ -132,6 +133,7 @@ make help
 make report ARGS="--audio"
 make rename ARGS="--video --audio"
 make process ARGS="--video --audio --subtitles"
+make process ARGS="--video --audio --set-default-audio"
 ```
 
 Supported processing flags:
@@ -146,6 +148,12 @@ Common CLI path options:
 - `--audio-report "audio_report.json"`
 - `--subtitle-report "subtitles_report.json"`
 - `--file "relative/path/Movie.mkv"`
+
+Default audio options:
+
+- `--set-default-audio`
+- `--no-set-default-audio`
+- `--default-audio-language "English"`
 
 Makefile path variables:
 
@@ -240,6 +248,12 @@ Reviewed all-track rename:
 make rename ARGS="--video --audio --subtitles"
 ```
 
+Reviewed video/audio rename and make English audio default:
+
+```powershell
+make rename ARGS="--video --audio --set-default-audio --default-audio-language English"
+```
+
 Subtitle-only renaming:
 
 ```bash
@@ -264,6 +278,7 @@ If an MKV contains multiple video tracks, the video rename is skipped for that f
 
 ```bash
 mkvpropedit FILE --edit track:=UID --set name=NEW_NAME
+mkvpropedit FILE --edit track:=AUDIO_UID --set flag-default=1
 ```
 
 When a Track UID is unavailable, the implementation falls back to the MKVToolNix type ordinal selector:
@@ -273,6 +288,50 @@ mkvpropedit FILE --edit track:aN --set name=NEW_NAME
 mkvpropedit FILE --edit track:vN --set name=NEW_NAME
 mkvpropedit FILE --edit track:sN --set name=NEW_NAME
 ```
+
+### Default audio selection
+
+Default-audio selection means setting the Matroska audio-track `flag-default` metadata. It is disabled unless `--set-default-audio` is supplied.
+
+Preferred default audio language defaults to:
+
+```bash
+English
+```
+
+This preferred language does not activate the feature by itself. The actual Matroska `language` field is not changed.
+
+Video/audio processing without changing default audio:
+
+```powershell
+make process ARGS="--video --audio"
+```
+
+Video/audio and make English audio default:
+
+```powershell
+make process ARGS="--video --audio --set-default-audio"
+```
+
+Explicit English:
+
+```powershell
+make process ARGS="--video --audio --set-default-audio --default-audio-language English"
+```
+
+Portuguese:
+
+```powershell
+make process ARGS="--video --audio --set-default-audio --default-audio-language Portuguese"
+```
+
+Explicitly keep default-audio changes disabled:
+
+```powershell
+make process ARGS="--video --audio --no-set-default-audio"
+```
+
+If exactly one audio track resolves to the requested language, that track becomes default and every other audio track is set to `flag-default=0`. If no requested-language audio track exists, existing default audio flags are left unchanged. If multiple requested-language audio tracks exist, existing default audio flags are left unchanged instead of guessing. If the requested-language track is already the only default audio track, no default-flag edit is generated.
 
 ### Integrated process workflow
 
@@ -288,7 +347,13 @@ Everything:
 make process ARGS="--video --audio --subtitles"
 ```
 
-This runs `auto_track_metadata_renamer.py`, generates the selected audio and/or subtitle reports, recursively discovers supported Matroska files under `INPUT_DIR`, sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies selected video/audio/subtitle `name=` edits for each MKV in one `mkvpropedit` invocation.
+Everything with English audio default:
+
+```powershell
+make process ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English"
+```
+
+This runs `auto_track_metadata_renamer.py`, generates the selected audio and/or subtitle reports, recursively discovers supported Matroska files under `INPUT_DIR`, sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies selected video/audio/subtitle `name=` edits plus optional audio `flag-default=` edits for each MKV in one `mkvpropedit` invocation.
 
 When subtitles are not selected, subtitle reports are not generated, subtitle content is not extracted, and subtitle track names are not changed.
 
@@ -298,10 +363,22 @@ When subtitles are not selected, subtitle reports are not generated, subtitle co
 Start-Sleep -Seconds 2400; make process ARGS="--video --audio"
 ```
 
+40-minute delayed video and audio processing with English default audio:
+
+```powershell
+Start-Sleep -Seconds 2400; make process ARGS="--video --audio --set-default-audio --default-audio-language English"
+```
+
 40-minute delayed complete processing:
 
 ```powershell
 Start-Sleep -Seconds 2400; make process ARGS="--video --audio --subtitles"
+```
+
+40-minute delayed complete processing with English default audio:
+
+```powershell
+Start-Sleep -Seconds 2400; make process ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English"
 ```
 
 Unknown audio or subtitle languages are skipped safely. Image-based subtitle tracks are renamed only when reliable metadata resolves the language.
@@ -311,7 +388,7 @@ Unknown audio or subtitle languages are skipped safely. Image-based subtitle tra
 ```bash
 python report.py --audio --subtitles
 python track_metadata_renamer.py --video --audio
-python auto_track_metadata_renamer.py --video --audio --subtitles
+python auto_track_metadata_renamer.py --video --audio --subtitles --set-default-audio
 ```
 
 ### Dependencies
@@ -348,12 +425,12 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 
 - [report.py](report.py): Recursively inspects supported Matroska files under `INPUT_DIR`, detects audio languages, preserves manual report values, and writes `audio_report.json` safely.
 - [subtitle_report.py](subtitle_report.py): Generates `subtitles_report.json` for embedded subtitle tracks.
-- [track_metadata_renamer.py](track_metadata_renamer.py): Reads `audio_report.json` and optional `subtitles_report.json`, resolves audio/subtitle target names, resolves video target names from filename stems, validates current file metadata, skips unsafe entries, and applies renames.
+- [track_metadata_renamer.py](track_metadata_renamer.py): Reads `audio_report.json` and optional `subtitles_report.json`, resolves audio/subtitle target names, resolves optional default audio flag changes, resolves video target names from filename stems, validates current file metadata, skips unsafe entries, and applies metadata edits.
 - [auto_track_metadata_renamer.py](auto_track_metadata_renamer.py): Runs the complete selected report-and-rename workflow.
 - [subtitle_tracks_renamer.py](subtitle_tracks_renamer.py): Applies embedded subtitle-track renames from `subtitles_report.json` only.
 - [audio_language_detector.py](audio_language_detector.py): Resolves language from metadata first, then uses distributed temporary audio samples with Whisper only when needed.
 - [subtitle_language_detector.py](subtitle_language_detector.py): Resolves embedded subtitle language from metadata first, then text subtitle content when available.
-- [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio/subtitle track `name=` metadata only.
+- [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio/subtitle track `name=` metadata and selected audio `flag-default=` metadata only.
 - [install_windows.bat](install_windows.bat): Windows dependency installer.
 - [install_linux.sh](install_linux.sh): Linux dependency installer.
 - [install_macos.sh](install_macos.sh): macOS dependency installer.
@@ -372,10 +449,13 @@ The implementation skips files or tracks safely when:
 - A file is unsupported, corrupt, or has no audio tracks.
 - A file has multiple video tracks and the video target is ambiguous.
 - A track has no target name and no detected language.
+- Requested default audio language is missing or ambiguous.
 - An image-based subtitle track has no reliable language metadata.
 - The current track name, track ID, or Track UID no longer matches the report.
 - `ffprobe`, `mkvmerge`, `ffmpeg`, or `mkvpropedit` is unavailable.
 - `mkvpropedit` returns an error for one file.
+
+When default-audio selection is enabled, unsupported language names fail at CLI parsing. `--set-default-audio` also requires `--audio`.
 
 `mkvpropedit` exit codes are handled deliberately:
 
