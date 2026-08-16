@@ -4,7 +4,9 @@ Generate the embedded subtitle-track rename report.
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
 
-from report import generate_subtitle_report  # Reuse subtitle report generation workflow.
+import sys  # Read forwarded CLI arguments.
+
+from report import run_report_cli  # Reuse report generation CLI.
 
 
 def main() -> None:
@@ -14,7 +16,7 @@ def main() -> None:
     :return: None.
     """
 
-    generate_subtitle_report()  # Generate default subtitle report.
+    sys.exit(run_report_cli(["--subtitles", *sys.argv[1:]]))  # Run subtitle report workflow.
 
 
 if __name__ == "__main__":  # Run script entry point when executed directly.
