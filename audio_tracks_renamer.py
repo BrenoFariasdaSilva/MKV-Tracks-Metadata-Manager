@@ -10,7 +10,7 @@ from typing import Any  # Type dynamic JSON data.
 import json  # Read report JSON.
 
 from mkvpropedit_wrapper import MkvpropeditResult, TrackNameEdit, apply_track_name_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
-from report import INPUT_DIR, REPORT_PATH, SUPPORTED_EXTENSIONS, discover_supported_files, parse_group_key, parse_occurrence_key, raw_track_name, read_audio_tracks, read_video_tracks  # Reuse report parsing and metadata inspection.
+from report import INPUT_DIR, REPORT_PATH, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, discover_supported_files, parse_group_key, parse_occurrence_key, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_subtitle_tracks, read_video_tracks  # Reuse report parsing and metadata inspection.
 
 
 @dataclass
@@ -42,6 +42,21 @@ class PlannedRename:
     target_name: str  # Store desired target name.
 
 
+@dataclass(frozen=True)
+class PlannedSubtitleRename:
+    """
+    Stores one validated subtitle report-driven rename request.
+    """
+
+    file_path: Path  # Store absolute file path.
+    relative_path: str  # Store report relative path.
+    subtitle_position: int  # Store zero-based subtitle position.
+    track_id: int | None  # Store MKVToolNix track ID from report.
+    track_uid: int | None  # Store Matroska track UID from report.
+    current_name: str  # Store current track name from report group.
+    target_name: str  # Store desired target name.
+
+
 def load_report_data(report_path: Path) -> dict[str, Any] | None:
     """
     Load report JSON data safely.
@@ -65,6 +80,22 @@ def load_report_data(report_path: Path) -> dict[str, Any] | None:
         return None  # Return no report data.
 
     return report_data  # Return parsed report data.
+
+
+def load_optional_report_data(report_path: Path) -> dict[str, Any]:
+    """
+    Load optional report JSON data safely.
+
+    :param report_path: Report JSON path.
+    :return: Report data object or empty object.
+    """
+
+    if not report_path.exists():  # Verify optional report file exists.
+        print(f"Optional report not found, skipping: {report_path}")  # Report missing optional report.
+        return {}  # Return empty report data.
+
+    report_data = load_report_data(report_path)  # Load report through strict parser.
+    return report_data if report_data is not None else {}  # Return parsed report or empty object.
 
 
 def resolve_target_name(desired_value: object, detected_value: object) -> str:
@@ -127,6 +158,51 @@ def collect_planned_renames(report_data: dict[str, Any], input_dir: Path, summar
     return planned_renames  # Return planned renames.
 
 
+def collect_planned_subtitle_renames(report_data: dict[str, Any], input_dir: Path, summary: RenameSummary) -> list[PlannedSubtitleRename]:
+    """
+    Collect subtitle report-driven rename requests before filesystem validation.
+
+    :param report_data: Parsed subtitle report JSON data.
+    :param input_dir: Input directory path.
+    :param summary: Mutable workflow summary.
+    :return: Planned subtitle rename requests.
+    """
+
+    planned_renames: list[PlannedSubtitleRename] = []  # Store subtitle rename requests.
+
+    for group_key, group_value in report_data.items():  # Iterate current-name groups.
+        if not isinstance(group_key, str) or not isinstance(group_value, dict):  # Verify group shape.
+            summary.skipped += 1  # Count malformed group skip.
+            summary.messages.append(f"Skipped malformed subtitle group: {group_key}")  # Store skip reason.
+            continue  # Skip malformed group.
+
+        display_name, parsed_count = parse_group_key(group_key)  # Parse current-name group key.
+        current_name = raw_subtitle_track_name(display_name)  # Convert display marker to raw track name.
+        desired_value = group_value.get("desired_new_name")  # Read group desired name.
+        occurrence_keys = [key for key in group_value if key != "desired_new_name"]  # Collect occurrence entries.
+        if parsed_count is not None and parsed_count != len(occurrence_keys):  # Verify group count is still self-consistent.
+            summary.messages.append(f"Subtitle group count mismatch in report: {group_key}")  # Store mismatch warning.
+
+        for occurrence_key in occurrence_keys:  # Iterate occurrence entries.
+            detected_value = group_value.get(occurrence_key)  # Read occurrence detected language.
+            target_name = resolve_target_name(desired_value, detected_value)  # Resolve target name.
+            parsed_occurrence = parse_subtitle_occurrence_key(str(occurrence_key))  # Parse occurrence key.
+            if parsed_occurrence is None:  # Verify occurrence key has targetable metadata.
+                summary.skipped += 1  # Count skipped occurrence.
+                summary.messages.append(f"Skipped malformed subtitle occurrence key: {occurrence_key}")  # Store skip reason.
+                continue  # Skip malformed occurrence.
+            if target_name == "":  # Verify a target name exists.
+                summary.skipped += 1  # Count skipped occurrence.
+                summary.messages.append(f"Skipped unknown subtitle target for: {occurrence_key}")  # Store skip reason.
+                continue  # Skip unresolved target.
+
+            relative_path, subtitle_position, track_id, track_uid = parsed_occurrence  # Unpack occurrence target.
+            file_path = input_dir / Path(relative_path)  # Build absolute file path.
+            planned_renames.append(PlannedSubtitleRename(file_path, relative_path, subtitle_position, track_id, track_uid, current_name, target_name))  # Store planned rename.
+
+    return planned_renames  # Return planned subtitle renames.
+
+
 def group_plans_by_file(plans: list[PlannedRename]) -> dict[Path, list[PlannedRename]]:
     """
     Group planned renames by media file.
@@ -136,6 +212,20 @@ def group_plans_by_file(plans: list[PlannedRename]) -> dict[Path, list[PlannedRe
     """
 
     grouped_plans: dict[Path, list[PlannedRename]] = {}  # Store plans by file path.
+    for plan in plans:  # Iterate plans.
+        grouped_plans.setdefault(plan.file_path, []).append(plan)  # Add plan to file group.
+    return grouped_plans  # Return grouped plans.
+
+
+def group_subtitle_plans_by_file(plans: list[PlannedSubtitleRename]) -> dict[Path, list[PlannedSubtitleRename]]:
+    """
+    Group planned subtitle renames by media file.
+
+    :param plans: Planned subtitle rename requests.
+    :return: Plans keyed by file path.
+    """
+
+    grouped_plans: dict[Path, list[PlannedSubtitleRename]] = {}  # Store plans by file path.
     for plan in plans:  # Iterate plans.
         grouped_plans.setdefault(plan.file_path, []).append(plan)  # Add plan to file group.
     return grouped_plans  # Return grouped plans.
@@ -249,40 +339,105 @@ def validate_audio_plans_for_file(file_path: Path, plans: list[PlannedRename], i
     return operations  # Return validated operations.
 
 
-def collect_candidate_files(grouped_plans: dict[Path, list[PlannedRename]], input_dir: Path) -> list[Path]:
+def validate_subtitle_plans_for_file(file_path: Path, plans: list[PlannedSubtitleRename], input_dir: Path, summary: RenameSummary) -> list[TrackNameEdit]:
     """
-    Collect files eligible for video or audio name edits.
+    Validate planned subtitle renames against current file metadata.
+
+    :param file_path: Media file path.
+    :param plans: Planned subtitle renames for the file.
+    :param input_dir: Input directory path.
+    :param summary: Mutable workflow summary.
+    :return: mkvpropedit rename operations.
+    """
+
+    if not file_path.exists():  # Verify media file still exists.
+        summary.failed += len(plans)  # Count missing-file failures.
+        summary.messages.append(f"Missing subtitle file: {file_path}")  # Store failure reason.
+        return []  # Return no operations.
+    if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:  # Verify file remains Matroska video.
+        summary.skipped += len(plans)  # Count unsupported skips.
+        summary.messages.append(f"Unsupported subtitle container skipped: {file_path}")  # Store skip reason.
+        return []  # Return no operations.
+
+    try:  # Read current metadata without text fallback detection.
+        current_tracks = read_subtitle_tracks(file_path, input_dir, False)  # Inspect current subtitle metadata.
+    except Exception as error:  # Handle corrupt or unreadable file.
+        summary.failed += len(plans)  # Count inspection failures.
+        summary.messages.append(f"Subtitle metadata read failed for {file_path}: {error}")  # Store failure reason.
+        return []  # Return no operations.
+
+    operations: list[TrackNameEdit] = []  # Store validated mkvpropedit operations.
+    for plan in sorted(plans, key=lambda item: item.subtitle_position):  # Iterate plans by subtitle position.
+        if plan.subtitle_position >= len(current_tracks):  # Verify track ordinal still exists.
+            summary.failed += 1  # Count missing-track failure.
+            summary.messages.append(f"Subtitle track missing in {plan.relative_path}: subtitle {plan.subtitle_position + 1}")  # Store failure reason.
+            continue  # Skip missing track.
+
+        current_track = current_tracks[plan.subtitle_position]  # Read current track by subtitle ordinal.
+        if plan.track_uid is not None and current_track.track_uid != plan.track_uid:  # Verify Matroska track UID still matches the report.
+            summary.failed += 1  # Count stale-report failure.
+            summary.messages.append(f"Subtitle Track UID mismatch in {plan.relative_path} subtitle {plan.subtitle_position + 1}: report={plan.track_uid!r}, file={current_track.track_uid!r}")  # Store failure reason.
+            continue  # Skip stale occurrence.
+        if plan.track_id is not None and current_track.stream_index != plan.track_id:  # Verify MKVToolNix track ID still matches the report.
+            summary.failed += 1  # Count stale-report failure.
+            summary.messages.append(f"Subtitle Track ID mismatch in {plan.relative_path} subtitle {plan.subtitle_position + 1}: report={plan.track_id!r}, file={current_track.stream_index!r}")  # Store failure reason.
+            continue  # Skip stale occurrence.
+        if current_track.current_name == plan.target_name:  # Verify target already applied.
+            summary.skipped += 1  # Count no-op skip.
+            summary.messages.append(f"Already named {plan.target_name}: {plan.relative_path} subtitle {plan.subtitle_position + 1}")  # Store skip reason.
+            continue  # Skip no-op edit.
+        if current_track.current_name != plan.current_name:  # Verify report is not stale for this exact track.
+            summary.failed += 1  # Count stale-report failure.
+            summary.messages.append(f"Subtitle current name mismatch in {plan.relative_path} subtitle {plan.subtitle_position + 1}: report={plan.current_name!r}, file={current_track.current_name!r}")  # Store failure reason.
+            continue  # Skip stale occurrence.
+
+        track_selector = build_track_selector("s", plan.subtitle_position, current_track.track_uid)  # Prefer Matroska Track UID selector when available.
+        operations.append(TrackNameEdit(track_selector, current_track.current_name, plan.target_name))  # Store validated operation.
+        summary.planned += 1  # Count validated edit.
+
+    return operations  # Return validated operations.
+
+
+def collect_candidate_files(grouped_plans: dict[Path, list[PlannedRename]], grouped_subtitle_plans: dict[Path, list[PlannedSubtitleRename]], input_dir: Path) -> list[Path]:
+    """
+    Collect files eligible for video, audio, or subtitle name edits.
 
     :param grouped_plans: Planned audio renames keyed by file path.
+    :param grouped_subtitle_plans: Planned subtitle renames keyed by file path.
     :param input_dir: Input directory path.
     :return: Candidate file paths.
     """
 
     candidate_paths = set(discover_supported_files(input_dir))  # Collect current Matroska files for deterministic video naming.
     candidate_paths.update(grouped_plans)  # Include report files that may need audio validation.
+    candidate_paths.update(grouped_subtitle_plans)  # Include subtitle report files that may need validation.
     return sorted(candidate_paths, key=lambda path: path.as_posix().lower())  # Return deterministic file order.
 
 
-def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], input_dir: Path, summary: RenameSummary) -> list[MkvpropeditResult]:
+def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], grouped_subtitle_plans: dict[Path, list[PlannedSubtitleRename]], input_dir: Path, summary: RenameSummary, include_video: bool = True) -> list[MkvpropeditResult]:
     """
     Apply validated renames one mkvpropedit invocation per file.
 
     :param grouped_plans: Planned renames keyed by file path.
+    :param grouped_subtitle_plans: Planned subtitle renames keyed by file path.
     :param input_dir: Input directory path.
     :param summary: Mutable workflow summary.
+    :param include_video: Whether deterministic video names should be applied.
     :return: mkvpropedit results.
     """
 
     results: list[MkvpropeditResult] = []  # Store mkvpropedit results.
-    candidate_files = collect_candidate_files(grouped_plans, input_dir)  # Collect video and audio candidate files.
+    candidate_files = collect_candidate_files(grouped_plans, grouped_subtitle_plans, input_dir)  # Collect video, audio, and subtitle candidate files.
     current_supported_files = {path for path in candidate_files if path.exists() and path.suffix.lower() in SUPPORTED_EXTENSIONS}  # Collect current files for video naming eligibility.
     for file_path in candidate_files:  # Iterate files deterministically.
         operations: list[TrackNameEdit] = []  # Store combined file operations.
-        video_operation = validate_video_plan_for_file(file_path, input_dir, summary) if file_path in current_supported_files else None  # Validate deterministic video operation.
+        video_operation = validate_video_plan_for_file(file_path, input_dir, summary) if include_video and file_path in current_supported_files else None  # Validate deterministic video operation.
         if video_operation is not None:  # Verify video operation exists.
             operations.append(video_operation)  # Add video operation first.
         if file_path in grouped_plans:  # Verify report has audio plans for this file.
             operations.extend(validate_audio_plans_for_file(file_path, grouped_plans[file_path], input_dir, summary))  # Add validated audio operations.
+        if file_path in grouped_subtitle_plans:  # Verify subtitle report has plans for this file.
+            operations.extend(validate_subtitle_plans_for_file(file_path, grouped_subtitle_plans[file_path], input_dir, summary))  # Add validated subtitle operations.
         if not operations:  # Verify file has operations after validation.
             continue  # Skip files without edits.
 
@@ -305,12 +460,13 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], input_
     return results  # Return command results.
 
 
-def rename_audio_tracks(input_dir: str = INPUT_DIR, report_path: Path = REPORT_PATH) -> RenameSummary:
+def rename_audio_tracks(input_dir: str = INPUT_DIR, report_path: Path = REPORT_PATH, subtitle_report_path: Path = SUBTITLE_REPORT_PATH) -> RenameSummary:
     """
-    Rename deterministic video names and report-driven audio names.
+    Rename deterministic video names plus report-driven audio and subtitle names.
 
     :param input_dir: Input directory path string.
     :param report_path: Report JSON path.
+    :param subtitle_report_path: Subtitle report JSON path.
     :return: Rename workflow summary.
     """
 
@@ -328,7 +484,42 @@ def rename_audio_tracks(input_dir: str = INPUT_DIR, report_path: Path = REPORT_P
 
     planned_renames = collect_planned_renames(report_data, root_path, summary)  # Collect report rename requests.
     grouped_plans = group_plans_by_file(planned_renames)  # Group plans by media file.
-    apply_grouped_renames(grouped_plans, root_path, summary)  # Apply validated rename operations.
+    subtitle_report_data = load_optional_report_data(subtitle_report_path)  # Load optional subtitle report JSON.
+    planned_subtitle_renames = collect_planned_subtitle_renames(subtitle_report_data, root_path, summary)  # Collect subtitle report rename requests.
+    grouped_subtitle_plans = group_subtitle_plans_by_file(planned_subtitle_renames)  # Group subtitle plans by media file.
+    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary)  # Apply validated rename operations.
+
+    print(f"Summary: planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
+    for message in summary.messages:  # Iterate accumulated messages.
+        print(message)  # Report detailed message.
+
+    return summary  # Return workflow summary.
+
+
+def rename_subtitle_tracks(input_dir: str = INPUT_DIR, subtitle_report_path: Path = SUBTITLE_REPORT_PATH) -> RenameSummary:
+    """
+    Rename embedded subtitle-track metadata according to subtitles_report.json.
+
+    :param input_dir: Input directory path string.
+    :param subtitle_report_path: Subtitle report JSON path.
+    :return: Rename workflow summary.
+    """
+
+    summary = RenameSummary()  # Initialize workflow summary.
+    root_path = Path(input_dir)  # Resolve configured input directory.
+    if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
+        print(f"Input directory not found: {root_path}")  # Report missing input directory.
+        summary.failed += 1  # Count missing input as failure.
+        return summary  # Return summary.
+
+    report_data = load_report_data(subtitle_report_path)  # Load subtitle report JSON.
+    if report_data is None:  # Verify report loaded.
+        summary.failed += 1  # Count missing or malformed report.
+        return summary  # Return summary.
+
+    planned_renames = collect_planned_subtitle_renames(report_data, root_path, summary)  # Collect subtitle report rename requests.
+    grouped_plans = group_subtitle_plans_by_file(planned_renames)  # Group subtitle plans by media file.
+    apply_grouped_renames({}, grouped_plans, root_path, summary, False)  # Apply subtitle-only rename operations.
 
     print(f"Summary: planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
     for message in summary.messages:  # Iterate accumulated messages.
