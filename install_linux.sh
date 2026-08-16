@@ -31,6 +31,9 @@ install_pacman_packages() {
 }
 
 install_system_packages() {
+    if command -v python3 >/dev/null 2>&1 && command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1 && command -v mkvpropedit >/dev/null 2>&1 && command -v mkvmerge >/dev/null 2>&1 && command -v mkvextract >/dev/null 2>&1; then
+        return
+    fi
     if command -v apt-get >/dev/null 2>&1; then
         install_apt_packages
         return
@@ -73,4 +76,5 @@ verify_command ffmpeg
 verify_command ffprobe
 verify_command mkvpropedit
 verify_command mkvmerge
+verify_command mkvextract
 echo "Installation complete."
