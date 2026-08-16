@@ -42,6 +42,20 @@ class AudioTrackRecord:
     detected_language: str  # Store detected canonical language or empty text.
 
 
+@dataclass(frozen=True)
+class VideoTrackRecord:
+    """
+    Stores one video-track occurrence from one media file.
+    """
+
+    file_path: Path  # Store absolute file path.
+    relative_path: str  # Store path relative to INPUT_DIR.
+    video_position: int  # Store zero-based video stream position.
+    stream_index: int | None  # Store MKVToolNix track ID.
+    track_uid: int | None  # Store Matroska track UID.
+    current_name: str  # Store current video track name metadata.
+
+
 def display_track_name(track_name: str) -> str:
     """
     Convert a raw track name into a stable report display value.
@@ -258,6 +272,26 @@ def read_mkvmerge_audio_tracks(media_data: dict[str, Any]) -> list[dict[str, Any
     return audio_tracks  # Return audio tracks in MKVToolNix order.
 
 
+def read_mkvmerge_video_tracks(media_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Read video tracks in MKVToolNix track order.
+
+    :param media_data: mkvmerge media metadata.
+    :return: Video track metadata objects.
+    """
+
+    raw_tracks = media_data.get("tracks")  # Read raw mkvmerge tracks.
+    tracks = raw_tracks if isinstance(raw_tracks, list) else []  # Normalize track list.
+    video_tracks: list[dict[str, Any]] = []  # Store video track objects.
+    for raw_track in tracks:  # Iterate mkvmerge tracks in reported order.
+        if not isinstance(raw_track, dict):  # Verify track object shape.
+            continue  # Skip invalid track.
+        if raw_track.get("type") != "video":  # Verify track is video.
+            continue  # Skip non-video track.
+        video_tracks.append(raw_track)  # Store video track.
+    return video_tracks  # Return video tracks in MKVToolNix order.
+
+
 def read_mkvmerge_properties(track: dict[str, Any]) -> dict[str, Any]:
     """
     Read mkvmerge track properties.
@@ -272,10 +306,10 @@ def read_mkvmerge_properties(track: dict[str, Any]) -> dict[str, Any]:
 
 def read_mkvmerge_track_name(track: dict[str, Any]) -> str:
     """
-    Read current audio-track name from MKVToolNix metadata.
+    Read current track name from MKVToolNix metadata.
 
     :param track: mkvmerge track metadata.
-    :return: Current audio-track name.
+    :return: Current track name.
     """
 
     properties = read_mkvmerge_properties(track)  # Read track properties.
@@ -374,6 +408,29 @@ def read_audio_tracks(file_path: Path, input_dir: Path, detect_language: bool) -
         audio_tracks.append(AudioTrackRecord(file_path, relative_path, audio_position, stream_index, track_uid, current_name, detected_language))  # Store track record.
 
     return audio_tracks  # Return audio records.
+
+
+def read_video_tracks(file_path: Path, input_dir: Path) -> list[VideoTrackRecord]:
+    """
+    Read video-track records from one supported media file.
+
+    :param file_path: Media file path.
+    :param input_dir: Input directory path.
+    :return: Video-track records.
+    """
+
+    mkvmerge_data = probe_mkvmerge(file_path)  # Read track order metadata from MKVToolNix.
+    mkvmerge_video_tracks = read_mkvmerge_video_tracks(mkvmerge_data)  # Read video tracks in mkvpropedit selector order.
+    video_tracks: list[VideoTrackRecord] = []  # Store video records.
+
+    for video_position, track in enumerate(mkvmerge_video_tracks):  # Iterate video tracks in MKVToolNix order.
+        current_name = read_mkvmerge_track_name(track)  # Read current track name.
+        stream_index = read_mkvmerge_track_id(track)  # Read MKVToolNix track ID.
+        track_uid = read_mkvmerge_track_uid(track)  # Read Matroska track UID.
+        relative_path = file_path.relative_to(input_dir).as_posix()  # Build deterministic relative path.
+        video_tracks.append(VideoTrackRecord(file_path, relative_path, video_position, stream_index, track_uid, current_name))  # Store track record.
+
+    return video_tracks  # Return video records.
 
 
 def collect_audio_tracks(input_dir: Path) -> list[AudioTrackRecord]:
