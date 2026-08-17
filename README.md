@@ -24,7 +24,7 @@ Metadata-only Matroska track metadata renamer that generates human-editable audi
 </div>
 
 ## Table of Contents
-- [MKV Track Metadata Manager. ](#mkv-track-metadata-renamer-)
+- [MKV Track Metadata Manager. ](#mkv-track-metadata-manager-)
 	- [Table of Contents](#table-of-contents)
 	- [Introduction](#introduction)
 	- [Setup](#setup)
@@ -35,7 +35,7 @@ Metadata-only Matroska track metadata renamer that generates human-editable audi
 	- [Run Python Code:](#run-python-code)
 		- [Makefile CLI](#makefile-cli)
 		- [Generate reports](#generate-reports)
-		- [Review desired_new_name](#review-desired_new_name)
+		- [Review desired\_new\_name](#review-desired_new_name)
 		- [Rename from reviewed reports](#rename-from-reviewed-reports)
 		- [Default audio selection](#default-audio-selection)
 		- [Default subtitle selection](#default-subtitle-selection)
@@ -46,7 +46,7 @@ Metadata-only Matroska track metadata renamer that generates human-editable audi
 	- [Project Structure](#project-structure)
 	- [Safety Notes](#safety-notes)
 	- [License](#license)
-		- [Creative Commons Zero v1.0 Universal](#creative-commons-zero-v10-universal)
+		- [Apache License 2.0](#apache-license-20)
 
 ## Introduction
 
@@ -570,8 +570,9 @@ When default-audio selection is enabled, unsupported language names fail at CLI 
 - `1`: modification completed with warning, and the warning is surfaced.
 - `2` or higher: failure.
 
+
 ## License
 
-### Creative Commons Zero v1.0 Universal
+### Apache License 2.0
 
-This project is licensed under the [Creative Commons Zero v1.0 Universal](../LICENSE), which means you are free to use, modify, and distribute the code, as long as you include the license and attribute the original author for the repository. See the [LICENSE](../LICENSE) file for more details.
+This project is licensed under the [Apache License 2.0](LICENSE). This license permits use, modification, distribution, and sublicense of the code for both private and commercial purposes, provided that the original copyright notice and a disclaimer of warranty are included in all copies or substantial portions of the software. It also requires a clear attribution back to the original author(s) of the repository. For more details, see the [LICENSE](LICENSE) file in this repository.
