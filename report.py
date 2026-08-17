@@ -5,7 +5,7 @@ Generate editable track-name rename reports for Matroska video files.
 from __future__ import annotations  # Enable modern annotations on older supported Python versions.
 
 import argparse  # Parse command-line arguments.
-from dataclasses import dataclass  # Define compact typed records.
+from dataclasses import dataclass, replace  # Define compact typed records.
 import json  # Read and write report JSON.
 import os  # Replace completed report files atomically.
 from pathlib import Path  # Represent filesystem paths.
@@ -160,6 +160,33 @@ def detect_subtitle_track_type(current_name: str, forced_track: bool) -> str:
     if forced_track:  # Verify strong Matroska forced flag.
         return "Forced"  # Return canonical forced type.
     return normalize_subtitle_type_value(current_name)  # Return explicit name-derived type when present.
+
+
+def apply_subtitle_context_types(tracks: list[SubtitleTrackRecord]) -> list[SubtitleTrackRecord]:
+    """
+    Classify safe Full subtitle counterparts within same-language groups.
+
+    :param tracks: Subtitle-track records with language and forced metadata.
+    :return: Subtitle-track records with contextual types applied.
+    """
+
+    grouped_tracks: dict[str, list[SubtitleTrackRecord]] = {}  # Store subtitle tracks by canonical language.
+    for track in tracks:  # Iterate subtitle records.
+        if track.detected_language == "":  # Verify language is known before contextual grouping.
+            continue  # Skip unknown-language tracks.
+        grouped_tracks.setdefault(track.detected_language, []).append(track)  # Add track to language group.
+
+    full_positions: set[tuple[str, int]] = set()  # Store tracks safely classified as Full by context.
+    for language, language_tracks in grouped_tracks.items():  # Iterate same-language subtitle groups.
+        has_forced_track = any(track.detected_type == "Forced" for track in language_tracks)  # Resolve whether language has a forced track.
+        untyped_non_forced_tracks = [track for track in language_tracks if track.detected_type == "" and not track.forced_track]  # Collect untyped non-forced counterparts.
+        if has_forced_track:  # Verify forced/non-forced relationship exists for this language.
+            full_positions.update((language, track.subtitle_position) for track in untyped_non_forced_tracks)  # Classify non-forced counterparts as Full.
+            continue  # Continue to next language group.
+        if len(language_tracks) == 1 and len(untyped_non_forced_tracks) == 1:  # Verify single ordinary subtitle with known language.
+            full_positions.add((language, untyped_non_forced_tracks[0].subtitle_position))  # Classify single ordinary subtitle as Full.
+
+    return [replace(track, detected_type="Full") if (track.detected_language, track.subtitle_position) in full_positions else track for track in tracks]  # Return context-classified records.
 
 
 def build_subtitle_detected_name(detected_language: str, detected_type: str) -> str:
@@ -785,7 +812,7 @@ def read_subtitle_tracks(file_path: Path, input_dir: Path, detect_language: bool
         relative_path = file_path.relative_to(input_dir).as_posix()  # Build deterministic relative path.
         subtitle_tracks.append(SubtitleTrackRecord(file_path, relative_path, subtitle_position, stream_index, track_uid, current_name, detected_language, detected_type, codec_id, codec_name, default_track, forced_track))  # Store track record.
 
-    return subtitle_tracks  # Return subtitle records.
+    return apply_subtitle_context_types(subtitle_tracks) if detect_language else subtitle_tracks  # Return subtitle records with context types when language is known.
 
 
 def collect_audio_tracks(input_dir: Path, selected_file: str | None = None) -> list[AudioTrackRecord]:
@@ -867,6 +894,10 @@ def resolve_subtitle_default_desired_name(tracks: list[SubtitleTrackRecord], exi
         detected_language, detected_type = parse_subtitle_detected_name(unique_names[0]) if len(unique_names) == 1 else ("", "")  # Parse unique detected target when available.
         if existing_language == detected_language and existing_type == "" and detected_type != "":  # Verify old language-only automatic value can be upgraded safely.
             return unique_names[0]  # Return type-aware automatic subtitle target.
+        detected_languages = {parse_subtitle_detected_name(detected_name)[0] for detected_name in unique_names}  # Collect detected target languages.
+        detected_types = {parse_subtitle_detected_name(detected_name)[1] for detected_name in unique_names}  # Collect detected target types.
+        if existing_type == "" and existing_language in detected_languages and len(detected_types - {""}) > 1:  # Verify old language-only value would collapse distinct subtitle types.
+            return ""  # Return empty desired name so each occurrence keeps its type-aware target.
         return existing_value  # Return manual desired name.
 
     if len(detected_names) > 0 and all(detected_name != "" for detected_name in detected_names) and len(unique_names) == 1:  # Verify every occurrence has the same confident target.
