@@ -149,7 +149,7 @@ def append_name_setter(command: list[str], edit: TrackMetadataEdit) -> int:
 
 def append_default_flag_setter(command: list[str], edit: TrackMetadataEdit) -> int:
     """
-    Append one safe audio default-flag setter when needed.
+    Append one safe default-flag setter when needed.
 
     :param command: Mutable mkvpropedit command arguments.
     :param edit: Track metadata edit operation.
@@ -197,7 +197,7 @@ def valid_setter_argument(track_selector: str, setter_value: str) -> bool:
 
     if setter_value.startswith("name="):  # Verify track-name setter.
         return True  # Accept track-name setter.
-    if setter_value in {"flag-default=0", "flag-default=1"} and (track_selector.startswith("track:a") or track_selector.startswith("track:=")):  # Verify audio default flag setter.
+    if setter_value in {"flag-default=0", "flag-default=1"} and (track_selector.startswith("track:a") or track_selector.startswith("track:s") or track_selector.startswith("track:=")):  # Verify audio/subtitle default flag setter.
         return True  # Accept default flag setter.
     return False  # Reject every other property.
 
