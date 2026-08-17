@@ -13,10 +13,7 @@ import sys  # Return meaningful CLI exit statuses.
 
 from audio_language_detector import normalize_language_value  # Reuse canonical language normalization.
 from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, apply_track_metadata_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
-from report import AUDIO_REPORT_PATH, INPUT_DIR, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, AudioTrackRecord, build_audio_report_data, discover_supported_files, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
-
-
-UNRESOLVED_AUDIO_REPORT_PATH = Path(__file__).with_name("audio_unresolved_report.json")  # Store unresolved audio report output beside this script.
+from report import AUDIO_REPORT_FILENAME, INPUT_DIR, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, build_audio_report_data, discover_supported_files, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
 
 
 @dataclass
@@ -808,19 +805,19 @@ def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bo
     return summary  # Return workflow summary.
 
 
-def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, subtitle_report_path: Path = SUBTITLE_REPORT_PATH, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: Path = UNRESOLVED_AUDIO_REPORT_PATH) -> RenameSummary:
+def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, subtitle_report_path: str | Path | None = None, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: str | Path | None = None) -> RenameSummary:
     """
     Rename deterministic video names plus report-driven audio and subtitle names.
 
     :param input_dir: Input directory path string.
-    :param report_path: Audio report JSON path.
-    :param subtitle_report_path: Subtitle report JSON path.
+    :param report_path: Explicit audio report JSON path or None for default path.
+    :param subtitle_report_path: Explicit subtitle report JSON path or None for default path.
     :param include_video: Whether video track names should be processed.
     :param include_audio: Whether audio track names should be processed.
     :param include_subtitles: Whether embedded subtitle track names should be processed.
     :param selected_file: Optional exact selected file under the input directory.
     :param default_audio: Default-audio configuration.
-    :param unresolved_audio_report_path: Audio report path for skipped or failed audio occurrences.
+    :param unresolved_audio_report_path: Explicit audio report path for skipped or failed audio occurrences.
     :return: Rename workflow summary.
     """
 
@@ -831,14 +828,17 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_
         summary.failed += 1  # Count missing input as failure.
         return summary  # Return summary.
 
-    report_data = load_report_data(report_path) if include_audio else {}  # Load audio report only when selected.
+    resolved_report_path = resolve_report_path(input_dir, report_path, AUDIO_REPORT_FILENAME)  # Resolve default or explicit audio report path.
+    resolved_subtitle_report_path = resolve_report_path(input_dir, subtitle_report_path, SUBTITLE_REPORT_FILENAME)  # Resolve default or explicit subtitle report path.
+    resolved_unresolved_audio_report_path = resolve_report_path(input_dir, unresolved_audio_report_path, UNRESOLVED_AUDIO_REPORT_FILENAME)  # Resolve default or explicit unresolved audio report path.
+    report_data = load_report_data(resolved_report_path) if include_audio else {}  # Load audio report only when selected.
     if report_data is None:  # Verify required audio report loaded.
         summary.failed += 1  # Count missing or malformed report.
         return summary  # Return summary.
 
     planned_renames = collect_planned_renames(report_data, root_path, summary) if include_audio else []  # Collect selected audio rename requests.
     grouped_plans = group_plans_by_file(planned_renames)  # Group plans by media file.
-    subtitle_report_data = load_report_data(subtitle_report_path) if include_subtitles else {}  # Load subtitle report only when selected.
+    subtitle_report_data = load_report_data(resolved_subtitle_report_path) if include_subtitles else {}  # Load subtitle report only when selected.
     if subtitle_report_data is None:  # Verify required subtitle report loaded.
         summary.failed += 1  # Count missing or malformed report.
         return summary  # Return summary.
@@ -846,7 +846,7 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_
     grouped_subtitle_plans = group_subtitle_plans_by_file(planned_subtitle_renames)  # Group subtitle plans by media file.
     apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file, default_audio)  # Apply validated rename operations.
     if include_audio:  # Verify audio workflow was selected.
-        write_unresolved_audio_report(summary, unresolved_audio_report_path)  # Write editable unresolved audio report.
+        write_unresolved_audio_report(summary, resolved_unresolved_audio_report_path)  # Write editable unresolved audio report.
 
     print(f"Summary: planned={summary.planned}, changed={summary.changed}, default_planned={summary.default_planned}, default_changed={summary.default_changed}, default_already={summary.default_already}, default_missing={summary.default_missing}, default_ambiguous={summary.default_ambiguous}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
     for message in summary.messages:  # Iterate accumulated messages.
@@ -855,19 +855,19 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_
     return summary  # Return workflow summary.
 
 
-def process_track_metadata(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, subtitle_report_path: Path = SUBTITLE_REPORT_PATH, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: Path = UNRESOLVED_AUDIO_REPORT_PATH) -> RenameSummary:
+def process_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, subtitle_report_path: str | Path | None = None, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: str | Path | None = None) -> RenameSummary:
     """
     Generate selected reports and apply selected track-name metadata changes.
 
     :param input_dir: Input directory path string.
-    :param report_path: Audio report JSON path.
-    :param subtitle_report_path: Subtitle report JSON path.
+    :param report_path: Explicit audio report JSON path or None for default path.
+    :param subtitle_report_path: Explicit subtitle report JSON path or None for default path.
     :param include_video: Whether video track names should be processed.
     :param include_audio: Whether audio track names should be processed.
     :param include_subtitles: Whether embedded subtitle track names should be processed.
     :param selected_file: Optional exact selected file under the input directory.
     :param default_audio: Default-audio configuration.
-    :param unresolved_audio_report_path: Audio report path for skipped or failed audio occurrences.
+    :param unresolved_audio_report_path: Explicit audio report path for skipped or failed audio occurrences.
     :return: Rename workflow summary.
     """
 
@@ -913,9 +913,9 @@ def add_path_arguments(parser: argparse.ArgumentParser) -> None:
     """
 
     parser.add_argument("--input-dir", default=INPUT_DIR, help="Input directory containing Matroska files.")  # Add input directory option.
-    parser.add_argument("--audio-report", default=str(AUDIO_REPORT_PATH), help="Audio report JSON path.")  # Add audio report path option.
-    parser.add_argument("--subtitle-report", default=str(SUBTITLE_REPORT_PATH), help="Subtitle report JSON path.")  # Add subtitle report path option.
-    parser.add_argument("--unresolved-audio-report", default=str(UNRESOLVED_AUDIO_REPORT_PATH), help="Audio report path for skipped or failed audio occurrences.")  # Add unresolved audio report path option.
+    parser.add_argument("--audio-report", default=None, help="Audio report JSON path; defaults to Reports/<input-prefix>-audio_report.json.")  # Add audio report path option.
+    parser.add_argument("--subtitle-report", default=None, help="Subtitle report JSON path; defaults to Reports/<input-prefix>-subtitles_report.json.")  # Add subtitle report path option.
+    parser.add_argument("--unresolved-audio-report", default=None, help="Audio report path for skipped or failed audio occurrences; defaults to Reports/<input-prefix>-audio_unresolved_report.json.")  # Add unresolved audio report path option.
     parser.add_argument("--file", default=None, help="Exact relative or absolute MKV file under input directory.")  # Add single-file option.
 
 
@@ -1031,8 +1031,11 @@ def run_rename_cli(arguments: list[str] | None = None) -> int:
     selection = read_track_selection(parsed_args, True)  # Read selected track types.
     require_track_selection(parser, selection)  # Require explicit selection.
     default_audio = read_default_audio_config(parser, parsed_args, selection)  # Read default-audio configuration.
-    validate_unresolved_report_path(parser, Path(parsed_args.audio_report), Path(parsed_args.unresolved_audio_report))  # Validate unresolved report output path.
-    summary = rename_track_metadata(parsed_args.input_dir, Path(parsed_args.audio_report), Path(parsed_args.subtitle_report), selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, Path(parsed_args.unresolved_audio_report))  # Run selected rename workflow.
+    audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.audio_report, AUDIO_REPORT_FILENAME)  # Resolve default or explicit audio report path.
+    subtitle_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.subtitle_report, SUBTITLE_REPORT_FILENAME)  # Resolve default or explicit subtitle report path.
+    unresolved_audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.unresolved_audio_report, UNRESOLVED_AUDIO_REPORT_FILENAME)  # Resolve default or explicit unresolved report path.
+    validate_unresolved_report_path(parser, audio_report_path, unresolved_audio_report_path)  # Validate unresolved report output path.
+    summary = rename_track_metadata(parsed_args.input_dir, audio_report_path, subtitle_report_path, selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, unresolved_audio_report_path)  # Run selected rename workflow.
     return 1 if summary.failed > 0 else 0  # Return nonzero when workflow failed.
 
 
@@ -1049,14 +1052,17 @@ def run_process_cli(arguments: list[str] | None = None) -> int:
     selection = read_track_selection(parsed_args, True)  # Read selected track types.
     require_track_selection(parser, selection)  # Require explicit selection.
     default_audio = read_default_audio_config(parser, parsed_args, selection)  # Read default-audio configuration.
-    validate_unresolved_report_path(parser, Path(parsed_args.audio_report), Path(parsed_args.unresolved_audio_report))  # Validate unresolved report output path.
-    summary = process_track_metadata(parsed_args.input_dir, Path(parsed_args.audio_report), Path(parsed_args.subtitle_report), selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, Path(parsed_args.unresolved_audio_report))  # Run integrated workflow.
+    audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.audio_report, AUDIO_REPORT_FILENAME)  # Resolve default or explicit audio report path.
+    subtitle_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.subtitle_report, SUBTITLE_REPORT_FILENAME)  # Resolve default or explicit subtitle report path.
+    unresolved_audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.unresolved_audio_report, UNRESOLVED_AUDIO_REPORT_FILENAME)  # Resolve default or explicit unresolved report path.
+    validate_unresolved_report_path(parser, audio_report_path, unresolved_audio_report_path)  # Validate unresolved report output path.
+    summary = process_track_metadata(parsed_args.input_dir, audio_report_path, subtitle_report_path, selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, unresolved_audio_report_path)  # Run integrated workflow.
     return 1 if summary.failed > 0 else 0  # Return nonzero when workflow failed.
 
 
 def rename_subtitle_tracks(input_dir: str = INPUT_DIR, subtitle_report_path: Path = SUBTITLE_REPORT_PATH) -> RenameSummary:
     """
-    Rename embedded subtitle-track metadata according to subtitles_report.json.
+    Rename embedded subtitle-track metadata according to a subtitle report.
 
     :param input_dir: Input directory path string.
     :param subtitle_report_path: Subtitle report JSON path.
@@ -1088,7 +1094,7 @@ def rename_subtitle_tracks(input_dir: str = INPUT_DIR, subtitle_report_path: Pat
 
 def main() -> None:
     """
-    Run track-name metadata renaming from audio_report.json and subtitles_report.json.
+    Run track-name metadata renaming from selected report files.
 
     :return: None.
     """
