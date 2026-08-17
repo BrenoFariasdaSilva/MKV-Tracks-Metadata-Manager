@@ -76,7 +76,6 @@ External subtitle files such as `.srt`, `.ass`, `.ssa`, `.vtt`, `.sub`, and `.id
 
 ## Setup
 
-
 ### Clone the repository
 
 1. Clone the repository with the following command:
