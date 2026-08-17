@@ -178,6 +178,7 @@ Default subtitle options:
 - `--set-default-subtitle`
 - `--no-set-default-subtitle`
 - `--default-subtitle-language "Portuguese"`
+- `--disable-forced-subtitles`
 - `--disable-default-subtitles`
 
 Makefile path variables:
@@ -257,7 +258,7 @@ Subtitle report occurrence values preserve known type before language:
 - `Full English`
 - `Forced English`
 
-The Matroska forced flag has priority for type classification. Existing names containing `Full`, `Complete`, `Completa`, or `Completo` become `Full`. Existing names containing `Forced`, `Forçada`, `Forcado`, `Forçado`, or `Forcada` become `Forced`. If language is known but type is not safely known, the generated name remains language-only, such as `Portuguese`.
+The Matroska forced flag has priority for type classification. Existing names containing `Full`, `Complete`, `Completa`, or `Completo` become `Full`. Existing names containing `Forced`, `Forçada`, `Forcado`, `Forçado`, or `Forcada` become `Forced`. When the same canonical language has a Forced track and a non-forced counterpart, the non-forced counterpart becomes `Full`. A single known-language non-forced subtitle with no conflicting type marker is also treated as `Full`. If language is known but type is not safely known, the generated name remains language-only, such as `Portuguese`.
 
 ### Review desired_new_name
 
@@ -389,7 +390,7 @@ If exactly one audio track resolves to the requested language, that track become
 
 ### Default subtitle selection
 
-Default-subtitle selection means setting the Matroska embedded subtitle-track `flag-default` metadata. It is disabled by default and only runs when `--set-default-subtitle` or `--disable-default-subtitles` is supplied.
+Default-subtitle selection means setting the Matroska embedded subtitle-track `flag-default` metadata. It is disabled by default and only runs when `--set-default-subtitle`, `--disable-forced-subtitles`, or `--disable-default-subtitles` is supplied.
 
 Preferred default subtitle target defaults to:
 
@@ -417,7 +418,21 @@ Disable all default subtitles:
 make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --disable-default-subtitles"
 ```
 
-If exactly one embedded subtitle resolves to `Full Portuguese`, that track becomes default and every other embedded subtitle track is set to `flag-default=0`. A `Forced Portuguese` subtitle is never used as a fallback target for requested `Full Portuguese`. If no requested full subtitle exists, existing subtitle default flags are left unchanged. If multiple requested full subtitle tracks exist, existing subtitle default flags are left unchanged instead of guessing. If the requested subtitle is already the only default subtitle, no default-flag edit is generated.
+Disable only forced subtitle defaults when a same-language Full subtitle exists:
+
+```powershell
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --disable-forced-subtitles"
+```
+
+English audio default, Full Portuguese subtitle default, and conditional Forced subtitle disabling:
+
+```powershell
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese --disable-forced-subtitles"
+```
+
+If exactly one embedded subtitle resolves to `Full Portuguese`, that track becomes default and other Portuguese subtitle tracks are set to `flag-default=0`. A `Forced Portuguese` subtitle is never used as a fallback target for requested `Full Portuguese`. If no requested full subtitle exists, existing subtitle default flags are left unchanged. If multiple requested full subtitle tracks exist, existing subtitle default flags are left unchanged instead of guessing. If the requested subtitle is already the only default subtitle for that language, no default-flag edit is generated.
+
+`--disable-forced-subtitles` clears `flag-default` only on Forced subtitles whose same canonical language also has a Full subtitle. If only `Forced English` exists and no `Full English` exists, that Forced English default state is preserved. `--disable-default-subtitles` remains as a separate explicit stronger option that clears `flag-default=0` on every embedded subtitle track.
 
 ### Integrated process workflow
 
@@ -443,6 +458,12 @@ Everything with English audio default and Full Portuguese subtitle default:
 
 ```powershell
 make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese"
+```
+
+Everything with English audio default, Full Portuguese subtitle default, and conditional Forced subtitle disabling:
+
+```powershell
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese --disable-forced-subtitles"
 ```
 
 This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` edits for each MKV in one `mkvpropedit` invocation.
