@@ -71,7 +71,13 @@ RENAME_CLI_ARGS += --unresolved-audio-report "$(UNRESOLVED_AUDIO_REPORT)"
 endif
 
 # Ensure logs directory exists (cross-platform)
-ENSURE_LOG_DIR := @mkdir -p $(LOG_DIR) 2>/dev/null || $(PYTHON_CMD) -c "import os; os.makedirs('$(LOG_DIR)', exist_ok=True)"
+ifeq ($(DETECTED_OS), Windows)
+ENSURE_LOG_DIR := @if not exist "$(LOG_DIR)" mkdir "$(LOG_DIR)"
+else ifeq ($(findstring MINGW,$(DETECTED_OS)),MINGW)
+ENSURE_LOG_DIR := @if not exist "$(LOG_DIR)" mkdir "$(LOG_DIR)"
+else
+ENSURE_LOG_DIR := @mkdir -p "$(LOG_DIR)"
+endif
 
 # Run-and-log function
 # On Windows: simply runs the Python script normally
@@ -101,8 +107,8 @@ help:
 	@echo "  make report ARGS=\"--audio\" or ARGS=\"--subtitles\""
 	@echo "  make rename ARGS=\"--video --audio\" or ARGS=\"--subtitles\""
 	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio\""
-	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio --set-default-audio\""
-	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --set-default-subtitle\""
+	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio --default-audio-language English\""
+	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --default-subtitle-language Portuguese\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --disable-forced-subtitles\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --disable-default-subtitles\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles\""
@@ -137,7 +143,7 @@ process-all:
 	$(MAKE) process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles"
 
 process-all-defaults:
-	$(MAKE) process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese --disable-forced-subtitles"
+	$(MAKE) process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --default-audio-language English --default-subtitle-language Portuguese --disable-forced-subtitles"
 
 report: dependencies
 	$(ENSURE_LOG_DIR)
