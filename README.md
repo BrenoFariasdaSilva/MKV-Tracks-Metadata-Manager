@@ -466,6 +466,12 @@ Everything with English audio default, Full Portuguese subtitle default, and con
 make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese --disable-forced-subtitles"
 ```
 
+Same workflow with only `INPUT_DIR` required:
+
+```powershell
+make process-all-defaults INPUT_DIR="E:/Movies/"
+```
+
 This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` edits for each MKV in one `mkvpropedit` invocation.
 
 When subtitles are not selected, subtitle reports are not generated, subtitle content is not extracted, and subtitle track names are not changed.
@@ -562,7 +568,7 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 - [install_windows.bat](install_windows.bat): Windows dependency installer.
 - [install_linux.sh](install_linux.sh): Linux dependency installer.
 - [install_macos.sh](install_macos.sh): macOS dependency installer.
-- [Makefile](Makefile): Provides `help`, `install`, `report`, `reports`, `rename`, `rename_subtitles`, `process`, `process-audio-video`, `process-all`, `auto`, `run`, `dependencies`, `generate_requirements`, and `clean` targets.
+- [Makefile](Makefile): Provides `help`, `install`, `report`, `reports`, `rename`, `rename_subtitles`, `process`, `process-audio-video`, `process-all`, `process-all-defaults`, `auto`, `run`, `dependencies`, `generate_requirements`, and `clean` targets.
 - [requirements.txt](requirements.txt): Python dependency list.
 
 ## Safety Notes
