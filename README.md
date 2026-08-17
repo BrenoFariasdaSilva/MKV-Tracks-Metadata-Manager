@@ -152,6 +152,7 @@ Common CLI path options:
 - `--input-dir "E:/Movies/"`
 - `--audio-report "audio_report.json"`
 - `--subtitle-report "subtitles_report.json"`
+- `--unresolved-audio-report "audio_unresolved_report.json"`
 - `--file "relative/path/Movie.mkv"`
 
 Default audio options:
@@ -165,6 +166,7 @@ Makefile path variables:
 - `INPUT_DIR="E:/Movies/"`
 - `AUDIO_REPORT="audio_report.json"`
 - `SUBTITLE_REPORT="subtitles_report.json"`
+- `UNRESOLVED_AUDIO_REPORT="audio_unresolved_report.json"`
 - `FILE="relative/path/Movie.mkv"`
 
 PowerShell path with spaces through Make:
@@ -238,6 +240,24 @@ If `desired_new_name` is non-empty, every occurrence in that group uses that val
 If `desired_new_name` is empty, the renamer falls back to that occurrence's detected language from the report. If both values are empty, the track is skipped safely.
 
 When regenerating `audio_report.json` or `subtitles_report.json`, existing manual `desired_new_name` values are preserved when the corresponding current-name group can be safely matched.
+
+When audio processing is selected, the rename step also writes `audio_unresolved_report.json`. This file uses the same editable audio report shape but contains only audio occurrences that were skipped because no target language/name was available or failed validation during rename. Edit its `desired_new_name` values, then rerun rename against that report:
+
+```powershell
+make rename ARGS="--audio" AUDIO_REPORT="audio_unresolved_report.json" INPUT_DIR="E:/Movies/"
+```
+
+To retry unresolved audio while also keeping video naming active:
+
+```powershell
+make rename ARGS="--video --audio" AUDIO_REPORT="audio_unresolved_report.json" INPUT_DIR="E:/Movies/"
+```
+
+Use a custom unresolved report path when needed:
+
+```powershell
+make rename ARGS="--video --audio" UNRESOLVED_AUDIO_REPORT="manual_audio_retry.json" INPUT_DIR="E:/Movies/"
+```
 
 ### Rename from reviewed reports
 
@@ -430,7 +450,7 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 
 - [report.py](report.py): Recursively inspects supported Matroska files under `INPUT_DIR`, detects audio languages, preserves manual report values, and writes `audio_report.json` safely.
 - [subtitle_report.py](subtitle_report.py): Generates `subtitles_report.json` for embedded subtitle tracks.
-- [track_metadata_renamer.py](track_metadata_renamer.py): Reads `audio_report.json` and optional `subtitles_report.json`, resolves audio/subtitle target names, resolves optional default audio flag changes, resolves video target names from filename stems, validates current file metadata, skips unsafe entries, and applies metadata edits.
+- [track_metadata_renamer.py](track_metadata_renamer.py): Reads `audio_report.json` and optional `subtitles_report.json`, resolves audio/subtitle target names, resolves optional default audio flag changes, resolves video target names from filename stems, validates current file metadata, writes `audio_unresolved_report.json` for actionable audio skips/failures, and applies metadata edits.
 - [auto_track_metadata_renamer.py](auto_track_metadata_renamer.py): Runs the complete selected report-and-rename workflow.
 - [subtitle_tracks_renamer.py](subtitle_tracks_renamer.py): Applies embedded subtitle-track renames from `subtitles_report.json` only.
 - [audio_language_detector.py](audio_language_detector.py): Resolves language from metadata first, then uses distributed temporary audio samples with Whisper only when needed.
