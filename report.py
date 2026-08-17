@@ -22,6 +22,19 @@ from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-lin
 from subtitle_language_detector import detect_subtitle_track_language  # Resolve metadata or text subtitle language.
 
 
+# Macros:
+class BackgroundColors:  # Colors for the terminal
+    CYAN = "\033[96m"  # Cyan
+    GREEN = "\033[92m"  # Green
+    YELLOW = "\033[93m"  # Yellow
+    RED = "\033[91m"  # Red
+    BOLD = "\033[1m"  # Bold
+    UNDERLINE = "\033[4m"  # Underline
+    CLEAR_TERMINAL = "\033[H\033[J"  # Clear the terminal
+
+
+TERMINAL_RESET = "\033[0m"  # Reset terminal colors after progress output.
+PROGRESS_BAR_FORMAT = f"{BackgroundColors.GREEN}{{l_bar}}{{bar}}{{r_bar}}{TERMINAL_RESET}"  # Render full progress bar in green.
 INPUT_DIR = "E:/Movies/"  # Store default recursive input directory.
 REPORTS_DIR = Path(__file__).with_name("Reports")  # Store report output directory beside this script.
 AUDIO_REPORT_FILENAME = "audio_report.json"  # Store default audio report filename.
@@ -826,9 +839,9 @@ def collect_audio_tracks(input_dir: Path, selected_file: str | None = None) -> l
 
     tracks: list[AudioTrackRecord] = []  # Store all discovered audio tracks.
     supported_files = discover_supported_files(input_dir, selected_file)  # Discover supported Matroska files once.
-    with tqdm(supported_files, desc="Processing MKV", unit="file") as progress_bar:  # Build cleanup-managed progress bar.
+    with tqdm(supported_files, desc=f"{BackgroundColors.GREEN}Processing MKV", unit="file", colour="green", bar_format=PROGRESS_BAR_FORMAT) as progress_bar:  # Build cleanup-managed progress bar.
         for file_path in progress_bar:  # Iterate supported Matroska files with progress.
-            progress_bar.set_description(f"Processing: {file_path.name}")  # Show current MKV filename.
+            progress_bar.set_description(f"{BackgroundColors.GREEN}Processing: {BackgroundColors.CYAN}{file_path.name}{BackgroundColors.GREEN}")  # Show current MKV filename.
             try:  # Inspect one file without stopping the full report.
                 tracks.extend(read_audio_tracks(file_path, input_dir, True))  # Add audio records with language detection.
             except Exception as error:  # Handle unexpected per-file failures.
@@ -848,9 +861,9 @@ def collect_subtitle_tracks(input_dir: Path, selected_file: str | None = None) -
 
     tracks: list[SubtitleTrackRecord] = []  # Store all discovered subtitle tracks.
     supported_files = discover_supported_files(input_dir, selected_file)  # Discover supported Matroska files once.
-    with tqdm(supported_files, desc="Processing subtitle MKV", unit="file") as progress_bar:  # Build cleanup-managed progress bar.
+    with tqdm(supported_files, desc=f"{BackgroundColors.GREEN}Processing subtitle MKV", unit="file", colour="green", bar_format=PROGRESS_BAR_FORMAT) as progress_bar:  # Build cleanup-managed progress bar.
         for file_path in progress_bar:  # Iterate supported Matroska files with progress.
-            progress_bar.set_description(f"Processing subtitles: {file_path.name}")  # Show current MKV filename.
+            progress_bar.set_description(f"{BackgroundColors.GREEN}Processing subtitles: {BackgroundColors.CYAN}{file_path.name}{BackgroundColors.GREEN}")  # Show current MKV filename.
             try:  # Inspect one file without stopping the full report.
                 tracks.extend(read_subtitle_tracks(file_path, input_dir, True))  # Add subtitle records with language detection.
             except Exception as error:  # Handle unexpected per-file failures.
