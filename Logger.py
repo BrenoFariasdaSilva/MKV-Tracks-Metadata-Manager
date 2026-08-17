@@ -81,6 +81,7 @@ class Logger:
         mode = "w" if clean else "a"  # Choose file mode based on 'clean' flag
         self.logfile = open(logfile_path, mode, encoding="utf-8")  # Open log file
         self.is_tty = sys.stdout.isatty()  # Verify if stdout is a TTY
+        self.encoding = self.logfile.encoding  # Mirror standard stream encoding attribute when requested.
 
 
     def write(self, message):
@@ -95,8 +96,6 @@ class Logger:
             return  # Early exit
 
         out = str(message)  # Convert message to string
-        if not out.endswith("\n"):  # Ensure newline termination
-            out += "\n"  # Append newline if missing
 
         clean_out = ANSI_ESCAPE_REGEX.sub("", out)  # Strip ANSI sequences for log file
 
@@ -116,6 +115,17 @@ class Logger:
                     sys.__stdout__.flush()  # Flush immediately
         except Exception:  # Fail silently to avoid breaking user code
             pass  # Silent fail
+
+
+    def isatty(self):
+        """
+        Report TTY capability for progress-bar aware libraries.
+
+        :param self: Instance of the Logger class.
+        :return: Whether the wrapped terminal behaves like a TTY.
+        """
+
+        return self.is_tty  # Mirror original stdout TTY status.
 
 
     def flush(self):
