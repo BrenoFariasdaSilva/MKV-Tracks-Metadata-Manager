@@ -17,6 +17,7 @@ from typing import Any  # Type dynamic ffprobe JSON values.
 from tqdm import tqdm  # Display report-generation progress.
 
 from audio_language_detector import detect_audio_track_language  # Resolve metadata or sampled audio language.
+from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
 from subtitle_language_detector import detect_subtitle_track_language  # Resolve metadata or text subtitle language.
 
@@ -931,6 +932,9 @@ def main() -> None:
     :return: None.
     """
 
+    logger = Logger(str(Path(__file__).with_name("Logs") / f"{Path(__file__).stem}.log"), clean=True)  # Create project-local log mirror.
+    sys.stdout = logger  # Mirror standard output to terminal and log file.
+    sys.stderr = logger  # Mirror standard error to terminal and log file.
     sys.exit(run_report_cli())  # Run CLI and return process status.
 
 
