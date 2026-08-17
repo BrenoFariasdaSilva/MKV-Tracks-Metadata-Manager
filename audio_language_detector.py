@@ -5,8 +5,10 @@ Detect audio-track language from metadata first, then sampled audio when needed.
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
 
 from collections import Counter  # Aggregate sample language votes.
+from contextlib import redirect_stderr, redirect_stdout  # Silence noisy optional detector console output.
 import importlib  # Load optional Whisper dependency lazily.
 import importlib.util  # Detect optional Whisper dependency without hard import errors.
+import io  # Capture noisy optional detector output without polluting progress bars.
 from pathlib import Path  # Represent media and temporary sample paths.
 import re  # Normalize metadata text.
 import subprocess  # Extract temporary audio samples with ffmpeg.
@@ -235,9 +237,11 @@ def detect_language_with_whisper(sample_path: Path) -> str:
 
     if importlib.util.find_spec("whisper") is None:  # Verify optional Whisper package is installed.
         return ""  # Return unknown when fallback detector is unavailable.
-    whisper_module = importlib.import_module("whisper")  # Import Whisper lazily.
-    model = whisper_module.load_model(WHISPER_MODEL)  # Load configured multilingual model.
-    result = model.transcribe(str(sample_path), task="transcribe", fp16=False, verbose=False)  # Transcribe sample for language detection.
+    sink = io.StringIO()  # Capture Whisper stdout and stderr so nested progress output does not break the main file bar.
+    with redirect_stdout(sink), redirect_stderr(sink):  # Silence optional detector chatter during lazy import, model load, and transcribe.
+        whisper_module = importlib.import_module("whisper")  # Import Whisper lazily.
+        model = whisper_module.load_model(WHISPER_MODEL)  # Load configured multilingual model.
+        result = model.transcribe(str(sample_path), task="transcribe", fp16=False, verbose=False)  # Transcribe sample for language detection.
     return read_whisper_language_result(result)  # Return conservative language result.
 
 
