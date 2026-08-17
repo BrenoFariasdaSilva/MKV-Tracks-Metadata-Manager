@@ -1,6 +1,6 @@
 <div align="center">
   
-# [MKV Track Metadata Manager.](../README.md) <img src="https://github.com/devicons/devicon/blob/master/icons/MKV-Track-Metadata-Manager/MKV-Track-Metadata-Manager-original.svg"  width="3%" height="3%">
+# [MKV Tracks Metadata Manager.](../README.md) <img src="https://github.com/devicons/devicon/blob/master/icons/MKV-Track-Metadata-Manager/MKV-Track-Metadata-Manager-original.svg"  width="3%" height="3%">
 
 </div>
 
@@ -24,7 +24,7 @@ Metadata-only Matroska track metadata renamer that generates human-editable audi
 </div>
 
 ## Table of Contents
-- [MKV Track Metadata Manager. ](#mkv-track-metadata-manager-)
+- [MKV Tracks Metadata Manager. ](#mkv-track-metadata-manager-)
 	- [Table of Contents](#table-of-contents)
 	- [Introduction](#introduction)
 	- [Setup](#setup)
@@ -53,7 +53,7 @@ Metadata-only Matroska track metadata renamer that generates human-editable audi
 
 ## Introduction
 
-MKV Track Metadata Manager recursively scans the configured input directory for Matroska video files and collects every audio-track occurrence into a prefixed report under `Reports/`. Embedded subtitle tracks are collected separately into a prefixed subtitle report under `Reports/`.
+MKV Tracks Metadata Manager recursively scans the configured input directory for Matroska video files and collects every audio-track occurrence into a prefixed report under `Reports/`. Embedded subtitle tracks are collected separately into a prefixed subtitle report under `Reports/`.
 
 The default input directory is:
 
@@ -88,7 +88,7 @@ External subtitle files such as `.srt`, `.ass`, `.ssa`, `.vtt`, `.sub`, and `.id
 From this project directory:
 
 ```bash
-cd "MKV Track Metadata Manager"
+cd "MKV Tracks Metadata Manager"
 ```
 
 The reviewed-report workflow is:
