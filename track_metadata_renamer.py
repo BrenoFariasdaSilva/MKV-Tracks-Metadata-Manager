@@ -1209,8 +1209,7 @@ def add_default_audio_arguments(parser: argparse.ArgumentParser) -> None:
     :return: None.
     """
 
-    parser.add_argument("--set-default-audio", action=argparse.BooleanOptionalAction, default=False, help="Control audio flag-default edits; disabled by default and supports --no-set-default-audio.")  # Add default-audio flag control.
-    parser.add_argument("--default-audio-language", default="English", help="Preferred default audio language; defaults to English.")  # Add default audio language option.
+    parser.add_argument("--default-audio-language", default=None, help="Set requested audio language as default; omit to preserve audio default flags.")  # Add default audio language option.
 
 
 def add_default_subtitle_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1221,8 +1220,7 @@ def add_default_subtitle_arguments(parser: argparse.ArgumentParser) -> None:
     :return: None.
     """
 
-    parser.add_argument("--set-default-subtitle", action=argparse.BooleanOptionalAction, default=False, help="Control subtitle flag-default edits; disabled by default and supports --no-set-default-subtitle.")  # Add default-subtitle flag control.
-    parser.add_argument("--default-subtitle-language", default="Portuguese", help="Preferred default subtitle language; defaults to Portuguese with type Full.")  # Add default subtitle language option.
+    parser.add_argument("--default-subtitle-language", default=None, help="Set requested Full subtitle language as default; omit to preserve subtitle default flags.")  # Add default subtitle language option.
     parser.add_argument("--disable-default-subtitles", action="store_true", help="Set flag-default=0 on every embedded subtitle track.")  # Add disable-all subtitle default option.
     parser.add_argument("--disable-forced-subtitles", action="store_true", help="Set forced subtitle flag-default=0 only when same-language Full subtitle exists.")  # Add conditional forced-subtitle default option.
 
@@ -1237,13 +1235,15 @@ def read_default_audio_config(parser: argparse.ArgumentParser, parsed_args: argp
     :return: Default-audio configuration.
     """
 
+    if parsed_args.default_audio_language is None:  # Verify default-audio language was omitted.
+        return DefaultAudioConfig(False, "English")  # Preserve audio default flags.
+
     requested_language = normalize_language_value(parsed_args.default_audio_language)  # Normalize requested language through shared aliases.
     if requested_language == "":  # Verify requested language is supported.
         parser.error(f"Unsupported default audio language: {parsed_args.default_audio_language}")  # Exit with argument error.
-    enabled = bool(parsed_args.set_default_audio)  # Resolve default-audio state.
-    if enabled and not selection.audio:  # Verify audio processing is selected when default-audio edits are enabled.
-        parser.error("--set-default-audio requires --audio.")  # Exit with argument error.
-    return DefaultAudioConfig(enabled, requested_language)  # Return validated configuration.
+    if not selection.audio:  # Verify audio processing is selected when default-audio edits are enabled.
+        parser.error("--default-audio-language requires --audio.")  # Exit with argument error.
+    return DefaultAudioConfig(True, requested_language)  # Return validated configuration.
 
 
 def read_default_subtitle_config(parser: argparse.ArgumentParser, parsed_args: argparse.Namespace, selection: TrackSelection) -> DefaultSubtitleConfig:
@@ -1256,16 +1256,19 @@ def read_default_subtitle_config(parser: argparse.ArgumentParser, parsed_args: a
     :return: Default-subtitle configuration.
     """
 
-    requested_language = normalize_language_value(parsed_args.default_subtitle_language)  # Normalize requested language through shared aliases.
-    if requested_language == "":  # Verify requested language is supported.
-        parser.error(f"Unsupported default subtitle language: {parsed_args.default_subtitle_language}")  # Exit with argument error.
-    enabled = bool(parsed_args.set_default_subtitle)  # Resolve default-subtitle state.
+    enabled = parsed_args.default_subtitle_language is not None  # Resolve default-subtitle state from supplied language.
     disable_all = bool(parsed_args.disable_default_subtitles)  # Resolve disable-all state.
     disable_forced = bool(parsed_args.disable_forced_subtitles)  # Resolve conditional forced-subtitle state.
     if disable_all and (enabled or disable_forced):  # Verify disable-all is not mixed with selective subtitle modes.
-        parser.error("--disable-default-subtitles cannot be combined with --set-default-subtitle or --disable-forced-subtitles.")  # Exit with argument error.
+        parser.error("--disable-default-subtitles cannot be combined with --default-subtitle-language or --disable-forced-subtitles.")  # Exit with argument error.
     if (enabled or disable_all or disable_forced) and not selection.subtitles:  # Verify subtitle processing is selected when subtitle default edits are enabled.
-        parser.error("--set-default-subtitle, --disable-default-subtitles, and --disable-forced-subtitles require --subtitles.")  # Exit with argument error.
+        parser.error("--default-subtitle-language, --disable-default-subtitles, and --disable-forced-subtitles require --subtitles.")  # Exit with argument error.
+    if not enabled:  # Verify default-subtitle language was omitted.
+        return DefaultSubtitleConfig(False, disable_all, disable_forced, "Portuguese", "Full")  # Preserve subtitle defaults except explicit disable modes.
+
+    requested_language = normalize_language_value(parsed_args.default_subtitle_language)  # Normalize requested language through shared aliases.
+    if requested_language == "":  # Verify requested language is supported.
+        parser.error(f"Unsupported default subtitle language: {parsed_args.default_subtitle_language}")  # Exit with argument error.
     return DefaultSubtitleConfig(enabled, disable_all, disable_forced, requested_language, "Full")  # Return validated configuration.
 
 
