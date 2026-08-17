@@ -8,7 +8,7 @@
   
 ---
 
-Metadata-only Matroska track metadata renamer that generates human-editable audio and embedded-subtitle reports, sets the video track name from the filename, optionally sets a selected default audio language, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
+Metadata-only Matroska track metadata renamer that generates human-editable audio and embedded-subtitle reports, sets the video track name from the filename, optionally sets selected default audio/subtitle tracks, and applies the selected changes with MKVToolNix `mkvpropedit` without re-encoding or remuxing media.
 
 ---
 
@@ -38,6 +38,7 @@ Metadata-only Matroska track metadata renamer that generates human-editable audi
 		- [Review desired_new_name](#review-desired_new_name)
 		- [Rename from reviewed reports](#rename-from-reviewed-reports)
 		- [Default audio selection](#default-audio-selection)
+		- [Default subtitle selection](#default-subtitle-selection)
 		- [Integrated process workflow](#integrated-process-workflow)
 		- [Logging](#logging)
 		- [Direct Python execution](#direct-python-execution)
@@ -64,9 +65,9 @@ Supported extensions are:
 .mk3d
 ```
 
-The project modifies only explicitly selected track metadata. The actual file modification is performed by `mkvpropedit`, which edits Matroska metadata in place. The implementation sets one ordinary video track name to the MKV filename stem, applies report-driven audio and embedded-subtitle names, and can optionally set audio `flag-default` values. It does not re-encode, remux, remove streams, reorder tracks, change forced flags, change language metadata, alter subtitles, alter chapters, alter attachments, or modify audio/video contents.
+The project modifies only explicitly selected track metadata. The actual file modification is performed by `mkvpropedit`, which edits Matroska metadata in place. The implementation sets one ordinary video track name to the MKV filename stem, applies report-driven audio and embedded-subtitle names, and can optionally set audio/subtitle `flag-default` values. It does not re-encode, remux, remove streams, reorder tracks, change forced flags, change language metadata, alter subtitles, alter chapters, alter attachments, or modify audio/video contents.
 
-Language resolution prefers metadata first. Audio fallback extracts short temporary samples from multiple intermediate portions of the specific audio stream, analyzes them with Whisper, aggregates the sample results conservatively, and leaves the language unknown when confidence is insufficient or samples conflict. Embedded text subtitle fallback extracts the specific subtitle track to a temporary file, reads cues from multiple intermediate timeline regions, detects text language with `langdetect`, aggregates conservatively, and leaves the language unknown when evidence is weak or conflicting. Image-based subtitles use metadata only. Temporary files are created only for analysis and are cleaned up automatically.
+Language resolution prefers metadata first. Audio fallback extracts short temporary samples from multiple intermediate portions of the specific audio stream, analyzes them with Whisper, aggregates the sample results conservatively, and leaves the language unknown when confidence is insufficient or samples conflict. Embedded text subtitle fallback extracts the specific subtitle track to a temporary file, reads cues from multiple intermediate timeline regions, detects text language with `langdetect`, aggregates conservatively, and leaves the language unknown when evidence is weak or conflicting. Subtitle type is read from the forced flag first and explicit track-name words second. Image-based subtitles use metadata only. Temporary files are created only for analysis and are cleaned up automatically.
 
 External subtitle files such as `.srt`, `.ass`, `.ssa`, `.vtt`, `.sub`, and `.idx` are ignored.
 
@@ -172,6 +173,13 @@ Default audio options:
 - `--no-set-default-audio`
 - `--default-audio-language "English"`
 
+Default subtitle options:
+
+- `--set-default-subtitle`
+- `--no-set-default-subtitle`
+- `--default-subtitle-language "Portuguese"`
+- `--disable-default-subtitles`
+
 Makefile path variables:
 
 - `INPUT_DIR="E:/Movies/"`
@@ -236,11 +244,20 @@ Each occurrence key includes the relative file path, the audio ordinal, the MKVT
 {
     "<missing subtitle track name> (2)": {
         "desired_new_name": "",
-        "Movie.mkv [subtitle:1 track-id:4 uid:123456789]": "Portuguese",
-        "Movie.mkv [subtitle:2 track-id:5 uid:987654321]": "English"
+        "Movie.mkv [subtitle:1 track-id:4 uid:123456789]": "Full Portuguese",
+        "Movie.mkv [subtitle:2 track-id:5 uid:987654321]": "Forced Portuguese"
     }
 }
 ```
+
+Subtitle report occurrence values preserve known type before language:
+
+- `Full Portuguese`
+- `Forced Portuguese`
+- `Full English`
+- `Forced English`
+
+The Matroska forced flag has priority for type classification. Existing names containing `Full`, `Complete`, `Completa`, or `Completo` become `Full`. Existing names containing `Forced`, `Forçada`, `Forcado`, `Forçado`, or `Forcada` become `Forced`. If language is known but type is not safely known, the generated name remains language-only, such as `Portuguese`.
 
 ### Review desired_new_name
 
@@ -315,6 +332,7 @@ If an MKV contains multiple video tracks, the video rename is skipped for that f
 ```bash
 mkvpropedit FILE --edit track:=UID --set name=NEW_NAME
 mkvpropedit FILE --edit track:=AUDIO_UID --set flag-default=1
+mkvpropedit FILE --edit track:=SUBTITLE_UID --set flag-default=1
 ```
 
 When a Track UID is unavailable, the implementation falls back to the MKVToolNix type ordinal selector:
@@ -369,6 +387,38 @@ make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --no-set-default
 
 If exactly one audio track resolves to the requested language, that track becomes default and every other audio track is set to `flag-default=0`. If no requested-language audio track exists, existing default audio flags are left unchanged. If multiple requested-language audio tracks exist, existing default audio flags are left unchanged instead of guessing. If the requested-language track is already the only default audio track, no default-flag edit is generated.
 
+### Default subtitle selection
+
+Default-subtitle selection means setting the Matroska embedded subtitle-track `flag-default` metadata. It is disabled by default and only runs when `--set-default-subtitle` or `--disable-default-subtitles` is supplied.
+
+Preferred default subtitle target defaults to:
+
+```bash
+Full Portuguese
+```
+
+The actual Matroska `language` and `forced` fields are not changed. Supplying `--default-subtitle-language` without `--set-default-subtitle` does not change default flags.
+
+Full Portuguese default subtitle:
+
+```powershell
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-subtitle --default-subtitle-language Portuguese"
+```
+
+English audio default plus Full Portuguese subtitle default:
+
+```powershell
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese"
+```
+
+Disable all default subtitles:
+
+```powershell
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --disable-default-subtitles"
+```
+
+If exactly one embedded subtitle resolves to `Full Portuguese`, that track becomes default and every other embedded subtitle track is set to `flag-default=0`. A `Forced Portuguese` subtitle is never used as a fallback target for requested `Full Portuguese`. If no requested full subtitle exists, existing subtitle default flags are left unchanged. If multiple requested full subtitle tracks exist, existing subtitle default flags are left unchanged instead of guessing. If the requested subtitle is already the only default subtitle, no default-flag edit is generated.
+
 ### Integrated process workflow
 
 Video and audio only:
@@ -389,7 +439,13 @@ Everything with English audio default:
 make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English"
 ```
 
-This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies selected video/audio/subtitle `name=` edits plus optional audio `flag-default=` edits for each MKV in one `mkvpropedit` invocation.
+Everything with English audio default and Full Portuguese subtitle default:
+
+```powershell
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese"
+```
+
+This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` edits for each MKV in one `mkvpropedit` invocation.
 
 When subtitles are not selected, subtitle reports are not generated, subtitle content is not extracted, and subtitle track names are not changed.
 
@@ -475,12 +531,12 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 
 - [report.py](report.py): Recursively inspects supported Matroska files under `INPUT_DIR`, detects audio languages, preserves manual report values, and writes prefixed audio reports under `Reports/` safely.
 - [subtitle_report.py](subtitle_report.py): Generates prefixed subtitle reports under `Reports/` for embedded subtitle tracks.
-- [track_metadata_renamer.py](track_metadata_renamer.py): Reads prefixed audio reports and optional prefixed subtitle reports, resolves audio/subtitle target names, resolves optional default audio flag changes, resolves video target names from filename stems, validates current file metadata, writes prefixed unresolved audio reports under `Reports/`, and applies metadata edits.
+- [track_metadata_renamer.py](track_metadata_renamer.py): Reads prefixed audio reports and optional prefixed subtitle reports, resolves audio/subtitle target names, resolves optional default audio/subtitle flag changes, resolves video target names from filename stems, validates current file metadata, writes prefixed unresolved audio reports under `Reports/`, and applies metadata edits.
 - [auto_track_metadata_renamer.py](auto_track_metadata_renamer.py): Runs the complete selected report-and-rename workflow.
 - [subtitle_tracks_renamer.py](subtitle_tracks_renamer.py): Applies embedded subtitle-track renames from the selected subtitle report only.
 - [audio_language_detector.py](audio_language_detector.py): Resolves language from metadata first, then uses distributed temporary audio samples with Whisper only when needed.
 - [subtitle_language_detector.py](subtitle_language_detector.py): Resolves embedded subtitle language from metadata first, then text subtitle content when available.
-- [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio/subtitle track `name=` metadata and selected audio `flag-default=` metadata only.
+- [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio/subtitle track `name=` metadata and selected audio/subtitle `flag-default=` metadata only.
 - [Logger.py](Logger.py): Mirrors executable script terminal output to matching files under `Logs/`.
 - [install_windows.bat](install_windows.bat): Windows dependency installer.
 - [install_linux.sh](install_linux.sh): Linux dependency installer.
@@ -501,6 +557,7 @@ The implementation skips files or tracks safely when:
 - A file has multiple video tracks and the video target is ambiguous.
 - A track has no target name and no detected language.
 - Requested default audio language is missing or ambiguous.
+- Requested Full default subtitle target is missing or ambiguous.
 - An image-based subtitle track has no reliable language metadata.
 - The current track name, track ID, or Track UID no longer matches the report.
 - `ffprobe`, `mkvmerge`, `ffmpeg`, or `mkvpropedit` is unavailable.
