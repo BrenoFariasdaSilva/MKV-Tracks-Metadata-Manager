@@ -28,6 +28,7 @@ Metadata-only Matroska track metadata renamer that generates human-editable audi
 	- [Table of Contents](#table-of-contents)
 	- [Introduction](#introduction)
 	- [Setup](#setup)
+		- [Clone the repository](#clone-the-repository)
 	- [Installation:](#installation)
 		- [Windows](#windows)
 		- [Linux](#linux)
@@ -74,6 +75,16 @@ Language resolution prefers metadata first. Audio fallback extracts short tempor
 External subtitle files such as `.srt`, `.ass`, `.ssa`, `.vtt`, `.sub`, and `.idx` are ignored.
 
 ## Setup
+
+
+### Clone the repository
+
+1. Clone the repository with the following command:
+
+   ```bash
+   git clone https://github.com/BrenoFariasdaSilva/MKV-Track-Metadata-Manager.git
+   cd MKV-Track-Metadata-Manager
+   ```
 
 From this project directory:
 
