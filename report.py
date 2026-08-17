@@ -16,7 +16,7 @@ import tempfile  # Create temporary files for safe report writes.
 from typing import Any  # Type dynamic ffprobe JSON values.
 from tqdm import tqdm  # Display report-generation progress.
 
-from audio_language_detector import detect_audio_track_language  # Resolve metadata or sampled audio language.
+from audio_language_detector import detect_audio_track_language, normalize_language_value, normalize_text  # Resolve metadata or sampled audio language.
 from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
 from subtitle_language_detector import detect_subtitle_track_language  # Resolve metadata or text subtitle language.
@@ -124,8 +124,85 @@ class SubtitleTrackRecord:
     track_uid: int | None  # Store Matroska track UID.
     current_name: str  # Store current subtitle track name metadata.
     detected_language: str  # Store detected canonical language or empty text.
+    detected_type: str  # Store detected canonical subtitle type or empty text.
     codec_id: str  # Store Matroska subtitle codec ID.
     codec_name: str  # Store MKVToolNix subtitle codec name.
+    default_track: bool  # Store current subtitle default-track flag.
+    forced_track: bool  # Store current subtitle forced-track flag.
+
+
+def normalize_subtitle_type_value(value: object) -> str:
+    """
+    Resolve one metadata value into a canonical subtitle type.
+
+    :param value: Raw subtitle type text.
+    :return: Canonical subtitle type or empty text.
+    """
+
+    normalized_value = normalize_text(value)  # Normalize text for accent-insensitive matching.
+    tokens = set(normalized_value.split())  # Build full-token lookup.
+    if tokens.intersection({"forced", "forcada", "forcado"}):  # Verify explicit forced-subtitle wording.
+        return "Forced"  # Return canonical forced type.
+    if tokens.intersection({"full", "complete", "completa", "completo"}):  # Verify explicit full-subtitle wording.
+        return "Full"  # Return canonical full type.
+    return ""  # Return unknown type.
+
+
+def detect_subtitle_track_type(current_name: str, forced_track: bool) -> str:
+    """
+    Detect subtitle type from forced metadata and track name.
+
+    :param current_name: Current subtitle track name.
+    :param forced_track: Current Matroska forced-track flag.
+    :return: Canonical subtitle type or empty text.
+    """
+
+    if forced_track:  # Verify strong Matroska forced flag.
+        return "Forced"  # Return canonical forced type.
+    return normalize_subtitle_type_value(current_name)  # Return explicit name-derived type when present.
+
+
+def build_subtitle_detected_name(detected_language: str, detected_type: str) -> str:
+    """
+    Build canonical subtitle name from detected type and language.
+
+    :param detected_language: Canonical subtitle language.
+    :param detected_type: Canonical subtitle type.
+    :return: Canonical subtitle name or empty text.
+    """
+
+    if detected_language == "":  # Verify language is known.
+        return ""  # Return unknown target.
+    if detected_type == "":  # Verify subtitle type is known.
+        return detected_language  # Return language-only safe target.
+    return f"{detected_type} {detected_language}"  # Return type-before-language target.
+
+
+def parse_subtitle_detected_name(value: object) -> tuple[str, str]:
+    """
+    Parse canonical subtitle report value into language and type.
+
+    :param value: Subtitle report occurrence value.
+    :return: Canonical language and subtitle type.
+    """
+
+    if not isinstance(value, str):  # Verify value is text.
+        return "", ""  # Return unknown values.
+
+    normalized_value = value.strip()  # Normalize surrounding whitespace.
+    if normalized_value == "":  # Verify report value has content.
+        return "", ""  # Return unknown values.
+
+    detected_type = ""  # Store parsed subtitle type.
+    detected_language_text = normalized_value  # Store language text candidate.
+    for type_name in ("Forced", "Full"):  # Iterate supported type prefixes.
+        prefix = f"{type_name} "  # Build canonical prefix.
+        if normalized_value.casefold().startswith(prefix.casefold()):  # Verify value starts with a known type.
+            detected_type = type_name  # Store canonical type.
+            detected_language_text = normalized_value[len(prefix):]  # Remove type prefix for language parsing.
+            break  # Stop after first matching type.
+
+    return normalize_language_value(detected_language_text), detected_type  # Return parsed canonical values.
 
 
 def display_track_name(track_name: str) -> str:
@@ -551,6 +628,19 @@ def read_mkvmerge_default_track(track: dict[str, Any]) -> bool:
     return bool(raw_default) if isinstance(raw_default, bool) else False  # Return normalized default flag.
 
 
+def read_mkvmerge_forced_track(track: dict[str, Any]) -> bool:
+    """
+    Read the Matroska forced-track flag from mkvmerge metadata.
+
+    :param track: mkvmerge track metadata.
+    :return: True when track currently has forced flag enabled.
+    """
+
+    properties = read_mkvmerge_properties(track)  # Read track properties.
+    raw_forced = properties.get("forced_track")  # Read MKVToolNix forced-track property.
+    return bool(raw_forced) if isinstance(raw_forced, bool) else False  # Return normalized forced flag.
+
+
 def read_mkvmerge_codec_id(track: dict[str, Any]) -> str:
     """
     Read Matroska codec ID from mkvmerge metadata.
@@ -687,10 +777,13 @@ def read_subtitle_tracks(file_path: Path, input_dir: Path, detect_language: bool
         track_uid = read_mkvmerge_track_uid(track)  # Read Matroska track UID.
         codec_id = read_mkvmerge_codec_id(track)  # Read subtitle codec ID.
         codec_name = read_mkvmerge_codec_name(track)  # Read subtitle codec name.
+        default_track = read_mkvmerge_default_track(track)  # Read current default-track flag.
+        forced_track = read_mkvmerge_forced_track(track)  # Read current forced-track flag.
+        detected_type = detect_subtitle_track_type(current_name, forced_track)  # Detect subtitle type from reliable metadata.
         metadata_stream = build_language_metadata_stream(track)  # Build language metadata from MKVToolNix properties.
         detected_language = detect_subtitle_track_language(file_path, metadata_stream, stream_index, codec_id, codec_name, format_duration) if detect_language else ""  # Detect language when requested.
         relative_path = file_path.relative_to(input_dir).as_posix()  # Build deterministic relative path.
-        subtitle_tracks.append(SubtitleTrackRecord(file_path, relative_path, subtitle_position, stream_index, track_uid, current_name, detected_language, codec_id, codec_name))  # Store track record.
+        subtitle_tracks.append(SubtitleTrackRecord(file_path, relative_path, subtitle_position, stream_index, track_uid, current_name, detected_language, detected_type, codec_id, codec_name, default_track, forced_track))  # Store track record.
 
     return subtitle_tracks  # Return subtitle records.
 
@@ -758,6 +851,29 @@ def resolve_default_desired_name(tracks: list[Any], existing_value: str | None) 
     return existing_value if existing_value is not None else ""  # Return existing empty value or fresh empty value.
 
 
+def resolve_subtitle_default_desired_name(tracks: list[SubtitleTrackRecord], existing_value: str | None) -> str:
+    """
+    Resolve desired_new_name for one subtitle current-name group.
+
+    :param tracks: Subtitle tracks in the group.
+    :param existing_value: Existing desired value from a prior report.
+    :return: Desired new subtitle name.
+    """
+
+    detected_names = [build_subtitle_detected_name(track.detected_language, track.detected_type) for track in tracks]  # Collect canonical subtitle targets.
+    unique_names = sorted({detected_name for detected_name in detected_names if detected_name != ""})  # Collect non-empty target names.
+    if existing_value is not None and existing_value != "":  # Verify existing desired value is present.
+        existing_language, existing_type = parse_subtitle_detected_name(existing_value)  # Parse existing desired value.
+        detected_language, detected_type = parse_subtitle_detected_name(unique_names[0]) if len(unique_names) == 1 else ("", "")  # Parse unique detected target when available.
+        if existing_language == detected_language and existing_type == "" and detected_type != "":  # Verify old language-only automatic value can be upgraded safely.
+            return unique_names[0]  # Return type-aware automatic subtitle target.
+        return existing_value  # Return manual desired name.
+
+    if len(detected_names) > 0 and all(detected_name != "" for detected_name in detected_names) and len(unique_names) == 1:  # Verify every occurrence has the same confident target.
+        return unique_names[0]  # Return automatic desired name.
+    return existing_value if existing_value is not None else ""  # Return existing empty value or fresh empty value.
+
+
 def build_audio_report_data(tracks: list[AudioTrackRecord], existing_desired_names: dict[str, str]) -> dict[str, dict[str, str]]:
     """
     Build deterministic human-editable report data.
@@ -806,9 +922,9 @@ def build_subtitle_report_data(tracks: list[SubtitleTrackRecord], existing_desir
         group_tracks = sorted(grouped_tracks[display_name], key=lambda track: (track.relative_path.casefold(), track.subtitle_position))  # Order occurrences deterministically.
         group_key = f"{display_name} ({len(group_tracks)})"  # Build count-bearing group key.
         existing_value = existing_desired_names.get(display_name)  # Read preserved desired value.
-        group_data: dict[str, str] = {"desired_new_name": resolve_default_desired_name(group_tracks, existing_value)}  # Initialize editable group data.
+        group_data: dict[str, str] = {"desired_new_name": resolve_subtitle_default_desired_name(group_tracks, existing_value)}  # Initialize editable group data.
         for track in group_tracks:  # Iterate group occurrences.
-            group_data[build_subtitle_occurrence_key(track)] = track.detected_language  # Store occurrence detected language.
+            group_data[build_subtitle_occurrence_key(track)] = build_subtitle_detected_name(track.detected_language, track.detected_type)  # Store occurrence detected target.
         report_data[group_key] = group_data  # Store completed group.
 
     return report_data  # Return deterministic report data.
