@@ -12,6 +12,7 @@ import json  # Read report JSON.
 import sys  # Return meaningful CLI exit statuses.
 
 from audio_language_detector import normalize_language_value  # Reuse canonical language normalization.
+from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, apply_track_metadata_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
 from report import AUDIO_REPORT_FILENAME, INPUT_DIR, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, build_audio_report_data, discover_supported_files, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
 
@@ -1099,6 +1100,9 @@ def main() -> None:
     :return: None.
     """
 
+    logger = Logger(str(Path(__file__).with_name("Logs") / f"{Path(__file__).stem}.log"), clean=True)  # Create project-local log mirror.
+    sys.stdout = logger  # Mirror standard output to terminal and log file.
+    sys.stderr = logger  # Mirror standard error to terminal and log file.
     sys.exit(run_rename_cli())  # Run CLI and return process status.
 
 
