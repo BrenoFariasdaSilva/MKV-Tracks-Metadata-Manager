@@ -6,6 +6,7 @@ RENAME_ARGS ?=
 INPUT_DIR ?=
 AUDIO_REPORT ?=
 SUBTITLE_REPORT ?=
+UNRESOLVED_AUDIO_REPORT ?=
 FILE ?=
 HOST_OS := $(OS)
 ifeq ($(HOST_OS),Windows_NT)
@@ -62,7 +63,12 @@ COMMON_CLI_ARGS += --file "$(FILE)"
 endif
 CLI_ARGS := $(ARGS) $(COMMON_CLI_ARGS)
 REPORT_CLI_ARGS := $(REPORT_ARGS) $(COMMON_CLI_ARGS)
+RENAME_TARGET_CLI_ARGS := $(ARGS) $(COMMON_CLI_ARGS)
 RENAME_CLI_ARGS := $(RENAME_ARGS) $(COMMON_CLI_ARGS)
+ifneq ($(strip $(UNRESOLVED_AUDIO_REPORT)),)
+RENAME_TARGET_CLI_ARGS += --unresolved-audio-report "$(UNRESOLVED_AUDIO_REPORT)"
+RENAME_CLI_ARGS += --unresolved-audio-report "$(UNRESOLVED_AUDIO_REPORT)"
+endif
 
 # Ensure logs directory exists (cross-platform)
 ENSURE_LOG_DIR := @mkdir -p $(LOG_DIR) 2>/dev/null || $(PYTHON_CMD) -c "import os; os.makedirs('$(LOG_DIR)', exist_ok=True)"
@@ -98,6 +104,7 @@ help:
 	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio --set-default-audio\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles\""
 	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio\" INPUT_DIR=\"E:/Movies/Test Folder\""
+	@echo "  make rename ARGS=\"--video --audio\" AUDIO_REPORT=\"audio_unresolved_report.json\""
 	@echo "  make process-audio-video"
 	@echo "  make process-all"
 
@@ -138,12 +145,12 @@ subtitle_report: dependencies
 rename: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(call RUN_AND_LOG, ./track_metadata_renamer.py $(CLI_ARGS))
+	$(call RUN_AND_LOG, ./track_metadata_renamer.py $(RENAME_TARGET_CLI_ARGS))
 
 rename_subtitles: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(call RUN_AND_LOG, ./track_metadata_renamer.py --subtitles $(CLI_ARGS))
+	$(call RUN_AND_LOG, ./track_metadata_renamer.py --subtitles $(RENAME_TARGET_CLI_ARGS))
 
 # Create virtual environment if missing
 $(VENV):
