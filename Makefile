@@ -110,6 +110,7 @@ help:
 	@echo "  make rename ARGS=\"--video --audio\" AUDIO_REPORT=\"Reports/E-Movies-audio_unresolved_report.json\""
 	@echo "  make process-audio-video"
 	@echo "  make process-all"
+	@echo "  make process-all-defaults INPUT_DIR=\"E:/Movies/\""
 
 install:
 	$(INSTALL_CMD)
@@ -134,6 +135,9 @@ process-audio-video:
 
 process-all:
 	$(MAKE) process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles"
+
+process-all-defaults:
+	$(MAKE) process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese --disable-forced-subtitles"
 
 report: dependencies
 	$(ENSURE_LOG_DIR)
@@ -175,4 +179,4 @@ clean:
 	find . -type f -name '*.pyc' -delete || del /S /Q *.pyc 2>nul
 	find . -type d -name '__pycache__' -delete || rmdir /S /Q __pycache__ 2>nul
 
-.PHONY: all help install run reports process auto process-audio-video process-all report subtitle_report rename rename_subtitles clean dependencies generate_requirements
+.PHONY: all help install run reports process auto process-audio-video process-all process-all-defaults report subtitle_report rename rename_subtitles clean dependencies generate_requirements
