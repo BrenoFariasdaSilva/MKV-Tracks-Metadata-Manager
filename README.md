@@ -39,6 +39,7 @@ Metadata-only Matroska track metadata renamer that generates human-editable audi
 		- [Rename from reviewed reports](#rename-from-reviewed-reports)
 		- [Default audio selection](#default-audio-selection)
 		- [Integrated process workflow](#integrated-process-workflow)
+		- [Logging](#logging)
 		- [Direct Python execution](#direct-python-execution)
 		- [Dependencies](#dependencies)
 	- [Project Structure](#project-structure)
@@ -418,6 +419,20 @@ Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio --subtitles" RENAME
 
 Unknown audio or subtitle languages are skipped safely. Image-based subtitle tracks are renamed only when reliable metadata resolves the language.
 
+### Logging
+
+Every executable Python entrypoint mirrors terminal output to a matching UTF-8 log file under `Logs/`.
+
+```bash
+Logs/report.log
+Logs/track_metadata_renamer.log
+Logs/auto_track_metadata_renamer.log
+Logs/subtitle_report.log
+Logs/subtitle_tracks_renamer.log
+```
+
+The log files are overwritten each time the corresponding script starts. ANSI terminal color sequences are stripped from file output.
+
 ### Direct Python execution
 
 ```bash
@@ -466,6 +481,7 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 - [audio_language_detector.py](audio_language_detector.py): Resolves language from metadata first, then uses distributed temporary audio samples with Whisper only when needed.
 - [subtitle_language_detector.py](subtitle_language_detector.py): Resolves embedded subtitle language from metadata first, then text subtitle content when available.
 - [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio/subtitle track `name=` metadata and selected audio `flag-default=` metadata only.
+- [Logger.py](Logger.py): Mirrors executable script terminal output to matching files under `Logs/`.
 - [install_windows.bat](install_windows.bat): Windows dependency installer.
 - [install_linux.sh](install_linux.sh): Linux dependency installer.
 - [install_macos.sh](install_macos.sh): macOS dependency installer.
