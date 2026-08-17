@@ -169,14 +169,10 @@ Common CLI path options:
 
 Default audio options:
 
-- `--set-default-audio`
-- `--no-set-default-audio`
 - `--default-audio-language "English"`
 
 Default subtitle options:
 
-- `--set-default-subtitle`
-- `--no-set-default-subtitle`
 - `--default-subtitle-language "Portuguese"`
 - `--disable-forced-subtitles`
 - `--disable-default-subtitles`
@@ -305,7 +301,7 @@ make rename ARGS="--video --audio --subtitles"
 Reviewed video/audio rename and make English audio default:
 
 ```powershell
-make rename ARGS="--video --audio --set-default-audio --default-audio-language English"
+make rename ARGS="--video --audio --default-audio-language English"
 ```
 
 Subtitle-only renaming:
@@ -346,15 +342,9 @@ mkvpropedit FILE --edit track:sN --set name=NEW_NAME
 
 ### Default audio selection
 
-Default-audio selection means setting the Matroska audio-track `flag-default` metadata. It is disabled by default and only runs when `--set-default-audio` is supplied.
+Default-audio selection means setting the Matroska audio-track `flag-default` metadata. It is disabled by default and only runs when `--default-audio-language` is supplied.
 
-Preferred default audio language defaults to:
-
-```bash
-English
-```
-
-The actual Matroska `language` field is not changed. Supplying `--default-audio-language` without `--set-default-audio` does not change default flags.
+The actual Matroska `language` field is not changed. Omitting `--default-audio-language` preserves existing audio default flags.
 
 Video/audio processing without default-audio changes:
 
@@ -365,51 +355,33 @@ make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio"
 English default:
 
 ```powershell
-make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --set-default-audio"
-```
-
-Explicit English with language option:
-
-```powershell
-make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --set-default-audio --default-audio-language English"
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --default-audio-language English"
 ```
 
 Portuguese:
 
 ```powershell
-make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --set-default-audio --default-audio-language Portuguese"
-```
-
-Disable default-audio changes:
-
-```powershell
-make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --no-set-default-audio"
+make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --default-audio-language Portuguese"
 ```
 
 If exactly one audio track resolves to the requested language, that track becomes default and every other audio track is set to `flag-default=0`. If no requested-language audio track exists, existing default audio flags are left unchanged. If multiple requested-language audio tracks exist, existing default audio flags are left unchanged instead of guessing. If the requested-language track is already the only default audio track, no default-flag edit is generated.
 
 ### Default subtitle selection
 
-Default-subtitle selection means setting the Matroska embedded subtitle-track `flag-default` metadata. It is disabled by default and only runs when `--set-default-subtitle`, `--disable-forced-subtitles`, or `--disable-default-subtitles` is supplied.
+Default-subtitle selection means setting the Matroska embedded subtitle-track `flag-default` metadata. It is disabled by default and only runs when `--default-subtitle-language`, `--disable-forced-subtitles`, or `--disable-default-subtitles` is supplied.
 
-Preferred default subtitle target defaults to:
-
-```bash
-Full Portuguese
-```
-
-The actual Matroska `language` and `forced` fields are not changed. Supplying `--default-subtitle-language` without `--set-default-subtitle` does not change default flags.
+The actual Matroska `language` and `forced` fields are not changed. Omitting `--default-subtitle-language` preserves existing subtitle default flags unless `--disable-forced-subtitles` or `--disable-default-subtitles` is supplied.
 
 Full Portuguese default subtitle:
 
 ```powershell
-make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-subtitle --default-subtitle-language Portuguese"
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --default-subtitle-language Portuguese"
 ```
 
 English audio default plus Full Portuguese subtitle default:
 
 ```powershell
-make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese"
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --default-audio-language English --default-subtitle-language Portuguese"
 ```
 
 Disable all default subtitles:
@@ -427,7 +399,7 @@ make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --su
 English audio default, Full Portuguese subtitle default, and conditional Forced subtitle disabling:
 
 ```powershell
-make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese --disable-forced-subtitles"
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --default-audio-language English --default-subtitle-language Portuguese --disable-forced-subtitles"
 ```
 
 If exactly one embedded subtitle resolves to `Full Portuguese`, that track becomes default and other Portuguese subtitle tracks are set to `flag-default=0`. A `Forced Portuguese` subtitle is never used as a fallback target for requested `Full Portuguese`. If no requested full subtitle exists, existing subtitle default flags are left unchanged. If multiple requested full subtitle tracks exist, existing subtitle default flags are left unchanged instead of guessing. If the requested subtitle is already the only default subtitle for that language, no default-flag edit is generated.
@@ -451,19 +423,19 @@ make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --su
 Everything with English audio default:
 
 ```powershell
-make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English"
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --default-audio-language English"
 ```
 
 Everything with English audio default and Full Portuguese subtitle default:
 
 ```powershell
-make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese"
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --default-audio-language English --default-subtitle-language Portuguese"
 ```
 
 Everything with English audio default, Full Portuguese subtitle default, and conditional Forced subtitle disabling:
 
 ```powershell
-make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English --set-default-subtitle --default-subtitle-language Portuguese --disable-forced-subtitles"
+make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --default-audio-language English --default-subtitle-language Portuguese --disable-forced-subtitles"
 ```
 
 Same workflow with only `INPUT_DIR` required:
@@ -485,7 +457,7 @@ Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio" RENAME_ARGS="--vid
 40-minute delayed video and audio processing with explicit English default audio:
 
 ```powershell
-Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --set-default-audio --default-audio-language English" INPUT_DIR="E:/Movies/"
+Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio --default-audio-language English" INPUT_DIR="E:/Movies/"
 ```
 
 40-minute delayed complete processing:
@@ -497,7 +469,7 @@ Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio --subtitles" RENAME
 40-minute delayed complete processing with explicit English default audio:
 
 ```powershell
-Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --set-default-audio --default-audio-language English" INPUT_DIR="E:/Movies/"
+Start-Sleep -Seconds 2400; make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --default-audio-language English --default-subtitle-language Portuguese --disable-forced-subtitles" INPUT_DIR="E:/Movies/"
 ```
 
 Unknown audio or subtitle languages are skipped safely. Image-based subtitle tracks are renamed only when reliable metadata resolves the language.
@@ -521,7 +493,7 @@ The log files are overwritten each time the corresponding script starts. ANSI te
 ```bash
 python report.py --audio --subtitles
 python track_metadata_renamer.py --video --audio
-python auto_track_metadata_renamer.py --video --audio --subtitles --set-default-audio
+python auto_track_metadata_renamer.py --video --audio --subtitles --default-audio-language English
 ```
 
 ### Dependencies
@@ -590,7 +562,7 @@ The implementation skips files or tracks safely when:
 - `ffprobe`, `mkvmerge`, `ffmpeg`, or `mkvpropedit` is unavailable.
 - `mkvpropedit` returns an error for one file.
 
-When default-audio selection is enabled, unsupported language names fail at CLI parsing. `--set-default-audio` also requires `--audio`.
+When default-audio selection is enabled, unsupported language names fail at CLI parsing. `--default-audio-language` also requires `--audio`.
 
 `mkvpropedit` exit codes are handled deliberately:
 
