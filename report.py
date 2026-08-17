@@ -22,8 +22,11 @@ from subtitle_language_detector import detect_subtitle_track_language  # Resolve
 
 
 INPUT_DIR = "E:/Movies/"  # Store default recursive input directory.
-AUDIO_REPORT_PATH = Path(__file__).with_name("audio_report.json")  # Store audio report output beside this script.
-SUBTITLE_REPORT_PATH = Path(__file__).with_name("subtitles_report.json")  # Store subtitle report output beside this script.
+REPORTS_DIR = Path(__file__).with_name("Reports")  # Store report output directory beside this script.
+AUDIO_REPORT_FILENAME = "audio_report.json"  # Store default audio report filename.
+SUBTITLE_REPORT_FILENAME = "subtitles_report.json"  # Store default subtitle report filename.
+UNRESOLVED_AUDIO_REPORT_FILENAME = "audio_unresolved_report.json"  # Store default unresolved audio report filename.
+INVALID_REPORT_FILENAME_PATTERN = re.compile(r"[<>:\"|?*\x00-\x1f]+")  # Match filename characters reserved by common filesystems.
 SUPPORTED_EXTENSIONS = (".mkv", ".mk3d")  # Limit edits to Matroska video containers supported by mkvpropedit.
 MISSING_TRACK_NAME = "<missing audio track name>"  # Display unnamed tracks without colliding with empty JSON keys.
 MISSING_SUBTITLE_TRACK_NAME = "<missing subtitle track name>"  # Display unnamed subtitle tracks without colliding with empty JSON keys.
@@ -31,6 +34,50 @@ ESCAPED_TRACK_NAME_PREFIX = "\\"  # Escape literal marker-like track names in re
 OCCURRENCE_SUFFIX_PATTERN = re.compile(r"^(?P<path>.+) \[audio:(?P<audio>\d+)(?: track-id:(?P<track_id>[^\s\]]+))?(?: uid:(?P<uid>[^\]]+))?(?: stream:(?P<stream>[^\]]+))?\]$")  # Parse occurrence keys.
 SUBTITLE_OCCURRENCE_SUFFIX_PATTERN = re.compile(r"^(?P<path>.+) \[subtitle:(?P<subtitle>\d+)(?: track-id:(?P<track_id>[^\s\]]+))?(?: uid:(?P<uid>[^\]]+))?\]$")  # Parse subtitle occurrence keys.
 GROUP_KEY_PATTERN = re.compile(r"^(?P<name>.*) \((?P<count>\d+)\)$")  # Parse grouped current-name keys.
+
+
+def build_report_prefix(input_dir: str) -> str:
+    """
+    Build a filename-safe report prefix from an input directory.
+
+    :param input_dir: Input directory path string.
+    :return: Filename-safe report prefix.
+    """
+
+    separatorless_prefix = input_dir.strip().replace("/", "").replace("\\", "")  # Remove path separators from the input directory.
+    safe_prefix = INVALID_REPORT_FILENAME_PATTERN.sub("-", separatorless_prefix).strip(" .-")  # Replace remaining reserved filename characters.
+    return safe_prefix if safe_prefix != "" else "input"  # Return stable fallback when input text becomes empty.
+
+
+def build_default_report_path(input_dir: str, report_filename: str) -> Path:
+    """
+    Build the default report path for one input directory.
+
+    :param input_dir: Input directory path string.
+    :param report_filename: Base report filename.
+    :return: Default report path.
+    """
+
+    return REPORTS_DIR / f"{build_report_prefix(input_dir)}-{report_filename}"  # Return prefixed report path.
+
+
+def resolve_report_path(input_dir: str, report_path: str | Path | None, report_filename: str) -> Path:
+    """
+    Resolve an explicit or default report path.
+
+    :param input_dir: Input directory path string.
+    :param report_path: Explicit report path or None.
+    :param report_filename: Base report filename.
+    :return: Resolved report path.
+    """
+
+    if report_path is None or str(report_path).strip() == "":  # Verify whether caller omitted a report path.
+        return build_default_report_path(input_dir, report_filename)  # Return input-prefixed default path.
+    return Path(report_path)  # Return explicit path unchanged.
+
+
+AUDIO_REPORT_PATH = build_default_report_path(INPUT_DIR, AUDIO_REPORT_FILENAME)  # Store default audio report path.
+SUBTITLE_REPORT_PATH = build_default_report_path(INPUT_DIR, SUBTITLE_REPORT_FILENAME)  # Store default subtitle report path.
 
 
 @dataclass(frozen=True)
@@ -783,12 +830,12 @@ def write_report(report_path: Path, report_data: dict[str, dict[str, str]]) -> N
     os.replace(temp_name, report_path)  # Atomically replace final report.
 
 
-def generate_audio_report(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_REPORT_PATH, selected_file: str | None = None) -> dict[str, dict[str, str]]:
+def generate_audio_report(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, selected_file: str | None = None) -> dict[str, dict[str, str]]:
     """
-    Generate audio_report.json from current audio-track metadata.
+    Generate an audio report from current audio-track metadata.
 
     :param input_dir: Input directory path string.
-    :param report_path: Output report path.
+    :param report_path: Explicit output report path or None for default path.
     :param selected_file: Optional exact selected file under the input directory.
     :return: Generated report data.
     """
@@ -798,20 +845,21 @@ def generate_audio_report(input_dir: str = INPUT_DIR, report_path: Path = AUDIO_
         print(f"Input directory not found: {root_path}")  # Report missing input directory.
         return {}  # Return empty report data without writing stale content.
 
-    existing_desired_names = read_existing_desired_names(report_path)  # Preserve safe manual desired names.
+    output_path = resolve_report_path(input_dir, report_path, AUDIO_REPORT_FILENAME)  # Resolve default or explicit report path.
+    existing_desired_names = read_existing_desired_names(output_path)  # Preserve safe manual desired names.
     tracks = collect_audio_tracks(root_path, selected_file)  # Collect all audio tracks.
     report_data = build_audio_report_data(tracks, existing_desired_names)  # Build report JSON object.
-    write_report(report_path, report_data)  # Write report safely.
-    print(f"Report written: {report_path}")  # Report output path.
+    write_report(output_path, report_data)  # Write report safely.
+    print(f"Report written: {output_path}")  # Report output path.
     return report_data  # Return generated data.
 
 
-def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: Path = SUBTITLE_REPORT_PATH, selected_file: str | None = None) -> dict[str, dict[str, str]]:
+def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, selected_file: str | None = None) -> dict[str, dict[str, str]]:
     """
-    Generate subtitles_report.json from current embedded subtitle-track metadata.
+    Generate a subtitle report from current embedded subtitle-track metadata.
 
     :param input_dir: Input directory path string.
-    :param report_path: Output subtitle report path.
+    :param report_path: Explicit subtitle report path or None for default path.
     :param selected_file: Optional exact selected file under the input directory.
     :return: Generated subtitle report data.
     """
@@ -821,11 +869,12 @@ def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: Path = SUB
         print(f"Input directory not found: {root_path}")  # Report missing input directory.
         return {}  # Return empty report data without writing stale content.
 
-    existing_desired_names = read_existing_desired_names(report_path)  # Preserve safe manual desired names.
+    output_path = resolve_report_path(input_dir, report_path, SUBTITLE_REPORT_FILENAME)  # Resolve default or explicit subtitle report path.
+    existing_desired_names = read_existing_desired_names(output_path)  # Preserve safe manual desired names.
     tracks = collect_subtitle_tracks(root_path, selected_file)  # Collect all embedded subtitle tracks.
     report_data = build_subtitle_report_data(tracks, existing_desired_names)  # Build subtitle report JSON object.
-    write_report(report_path, report_data)  # Write subtitle report safely.
-    print(f"Subtitle report written: {report_path}")  # Report output path.
+    write_report(output_path, report_data)  # Write subtitle report safely.
+    print(f"Subtitle report written: {output_path}")  # Report output path.
     return report_data  # Return generated data.
 
 
@@ -841,8 +890,8 @@ def build_report_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio", action="store_true", help="Generate the audio track-name report.")  # Add audio report flag.
     parser.add_argument("--subtitles", action="store_true", help="Generate the embedded subtitle track-name report.")  # Add subtitle report flag.
     parser.add_argument("--input-dir", default=INPUT_DIR, help="Input directory containing Matroska files.")  # Add input directory option.
-    parser.add_argument("--audio-report", default=str(AUDIO_REPORT_PATH), help="Audio report output path.")  # Add audio report path option.
-    parser.add_argument("--subtitle-report", default=str(SUBTITLE_REPORT_PATH), help="Subtitle report output path.")  # Add subtitle report path option.
+    parser.add_argument("--audio-report", default=None, help="Audio report output path; defaults to Reports/<input-prefix>-audio_report.json.")  # Add audio report path option.
+    parser.add_argument("--subtitle-report", default=None, help="Subtitle report output path; defaults to Reports/<input-prefix>-subtitles_report.json.")  # Add subtitle report path option.
     parser.add_argument("--file", default=None, help="Exact relative or absolute MKV file under input directory.")  # Add single-file option.
     return parser  # Return configured parser.
 
@@ -868,9 +917,9 @@ def run_report_cli(arguments: list[str] | None = None) -> int:
     if parsed_args.video:  # Verify video selection was provided.
         print("Video track names are deterministic and do not need a report.")  # Report no video report file.
     if parsed_args.audio:  # Verify audio report was requested.
-        generate_audio_report(parsed_args.input_dir, Path(parsed_args.audio_report), parsed_args.file)  # Generate audio report.
+        generate_audio_report(parsed_args.input_dir, parsed_args.audio_report, parsed_args.file)  # Generate audio report.
     if parsed_args.subtitles:  # Verify subtitle report was requested.
-        generate_subtitle_report(parsed_args.input_dir, Path(parsed_args.subtitle_report), parsed_args.file)  # Generate subtitle report.
+        generate_subtitle_report(parsed_args.input_dir, parsed_args.subtitle_report, parsed_args.file)  # Generate subtitle report.
 
     return 0  # Return success status.
 
