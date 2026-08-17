@@ -1,5 +1,5 @@
 """
-Rename embedded subtitle-track name metadata from subtitles_report.json.
+Rename embedded subtitle-track name metadata from a subtitle report.
 """
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
@@ -11,7 +11,7 @@ from track_metadata_renamer import run_rename_cli  # Reuse selected rename CLI.
 
 def main() -> None:
     """
-    Run embedded subtitle-track metadata renaming from subtitles_report.json.
+    Run embedded subtitle-track metadata renaming from a subtitle report.
 
     :return: None.
     """
