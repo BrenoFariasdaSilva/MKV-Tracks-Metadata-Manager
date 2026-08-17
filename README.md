@@ -1,6 +1,6 @@
 <div align="center">
   
-# [MKV Track Metadata Manager.](../README.md) <img src="https://github.com/devicons/devicon/blob/master/icons/python/python-original.svg"  width="3%" height="3%">
+# [MKV Track Metadata Manager.](../README.md) <img src="https://github.com/devicons/devicon/blob/master/icons/MKV-Track-Metadata-Manager/MKV-Track-Metadata-Manager-original.svg"  width="3%" height="3%">
 
 </div>
 
@@ -16,10 +16,10 @@ Metadata-only Matroska track metadata renamer that generates human-editable audi
 
 <div align="center">
 
-![GitHub Build/WorkFlow](https://img.shields.io/github/actions/workflow/status/BrenoFariasDaSilva/Python/update-worked-example-miner-submodule.yml)
-![GitHub Code Size in Bytes](https://img.shields.io/github/languages/code-size/BrenoFariasdaSilva/Python)
-![GitHub Last Commit](https://img.shields.io/github/last-commit/BrenoFariasdaSilva/Python)
-![GitHub](https://img.shields.io/github/license/BrenoFariasdaSilva/Python)
+![GitHub Build/WorkFlow](https://img.shields.io/github/actions/workflow/status/BrenoFariasDaSilva/MKV-Track-Metadata-Manager/update-worked-example-miner-submodule.yml)
+![GitHub Code Size in Bytes](https://img.shields.io/github/languages/code-size/BrenoFariasdaSilva/MKV-Track-Metadata-Manager)
+![GitHub Last Commit](https://img.shields.io/github/last-commit/BrenoFariasdaSilva/MKV-Track-Metadata-Manager)
+![GitHub](https://img.shields.io/github/license/BrenoFariasdaSilva/MKV-Track-Metadata-Manager)
 
 </div>
 
