@@ -141,27 +141,28 @@ def build_rename_progress_status(file_path: Path, operations: list[TrackMetadata
     :return: Short status text for the progress bar.
     """
 
+    cyan_name = f"{BackgroundColors.CYAN}{file_path.name}{BackgroundColors.GREEN}"  # Keep the current file name cyan inside the green progress bar message.
     if result is not None and not result.success:  # Highlight edit failure in the live bar.
-        return f"Failed: {file_path.name}"  # Return failure status.
+        return f"Failed: {cyan_name}"  # Return failure status.
     if result is not None and result.warning:  # Highlight warning-bearing edits in the live bar.
-        return f"Applied with warning: {file_path.name}"  # Return warning status.
+        return f"Applied with warning: {cyan_name}"  # Return warning status.
     if result is not None and result.changed_count > 0:  # Highlight successful edits in the live bar.
-        return f"Applied {result.changed_count} change(s): {file_path.name}"  # Return success status.
+        return f"Applied {result.changed_count} change(s): {cyan_name}"  # Return success status.
     if any(message.startswith("Already named ") for message in new_messages):  # Highlight idempotent name matches.
-        return f"Already named: {file_path.name}"  # Return idempotent name status.
+        return f"Already named: {cyan_name}"  # Return idempotent name status.
     if any(message.startswith("Default subtitles already disabled: ") for message in new_messages):  # Highlight already-cleared subtitle defaults.
-        return f"Default subtitles already disabled: {file_path.name}"  # Return disable-all status.
+        return f"Default subtitles already disabled: {cyan_name}"  # Return disable-all status.
     if any(message.startswith("Default ") and "already correct" in message for message in new_messages):  # Highlight already-correct default flags.
-        return f"Default already correct: {file_path.name}"  # Return idempotent default status.
+        return f"Default already correct: {cyan_name}"  # Return idempotent default status.
     if any(message.startswith("No ") and "unchanged." in message for message in new_messages):  # Highlight missing requested default targets.
-        return f"Default flags unchanged: {file_path.name}"  # Return unchanged-default status.
+        return f"Default flags unchanged: {cyan_name}"  # Return unchanged-default status.
     if any(message.startswith("Multiple ") and "unchanged." in message for message in new_messages):  # Highlight ambiguous requested default targets.
-        return f"Default target ambiguous: {file_path.name}"  # Return ambiguous-default status.
+        return f"Default target ambiguous: {cyan_name}"  # Return ambiguous-default status.
     if any(message.startswith("Forced subtitle defaults cleared where Full counterpart exists: ") for message in new_messages):  # Highlight forced-default cleanup.
-        return f"Forced defaults cleared: {file_path.name}"  # Return forced-default status.
+        return f"Forced defaults cleared: {cyan_name}"  # Return forced-default status.
     if not operations:  # Highlight files that needed no edit after validation.
-        return f"No changes needed: {file_path.name}"  # Return no-op status.
-    return f"Validated edits: {file_path.name}"  # Return fallback status.
+        return f"No changes needed: {cyan_name}"  # Return no-op status.
+    return f"Validated edits: {cyan_name}"  # Return fallback status.
 
 
 def print_rename_summary(summary: RenameSummary, include_defaults: bool = True) -> None:
