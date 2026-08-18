@@ -257,6 +257,12 @@ def apply_track_metadata_edits(file_path: Path, edits: list[TrackMetadataEdit]) 
     :return: mkvpropedit execution result.
     """
 
+    try:  # Validate target file size before invoking the only in-place editor in this project.
+        if file_path.stat().st_size == 0:  # Verify target file is not empty.
+            return MkvpropeditResult(file_path, ["mkvpropedit", str(file_path)], 2, "", "refusing to edit empty media file (0 bytes)", 0, False, False)  # Return safe early failure.
+    except OSError as error:  # Handle unreadable file paths conservatively.
+        return MkvpropeditResult(file_path, ["mkvpropedit", str(file_path)], 2, "", f"unable to read media file before edit: {error}", 0, False, False)  # Return safe early failure.
+
     executable = find_executable("mkvpropedit")  # Locate mkvpropedit executable.
     if executable is None:  # Verify mkvpropedit is available.
         return MkvpropeditResult(file_path, ["mkvpropedit", str(file_path)], 127, "", "mkvpropedit not found", 0, False, False)  # Return missing-tool failure.
