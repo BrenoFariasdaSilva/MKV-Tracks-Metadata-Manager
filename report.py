@@ -456,14 +456,14 @@ def resolve_selected_file(input_dir: Path, selected_file: str | None) -> Path | 
         resolved_media_path = media_path.resolve(strict=False)  # Resolve final selected path.
         resolved_media_path.relative_to(root_path)  # Verify selected path remains under input directory.
     except (OSError, ValueError):  # Handle invalid or escaping selected paths.
-        print(f"Selected file is outside input directory or invalid: {selected_file}")  # Report invalid selection.
+        print(f"{BackgroundColors.RED}Selected file is outside input directory or invalid{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{selected_file}{CLEAR_TERMINAL}")  # Report invalid selection.
         return None  # Return no selected file.
 
     if not resolved_media_path.exists() or not resolved_media_path.is_file():  # Verify selected file exists.
-        print(f"Selected file not found: {resolved_media_path}")  # Report missing selected file.
+        print(f"{BackgroundColors.RED}Selected file not found{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{resolved_media_path}{CLEAR_TERMINAL}")  # Report missing selected file.
         return None  # Return no selected file.
     if resolved_media_path.suffix.lower() not in SUPPORTED_EXTENSIONS:  # Verify selected file is supported Matroska.
-        print(f"Selected file is not a supported Matroska file: {resolved_media_path}")  # Report unsupported selected file.
+        print(f"{BackgroundColors.RED}Selected file is not a supported Matroska file{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{resolved_media_path}{CLEAR_TERMINAL}")  # Report unsupported selected file.
         return None  # Return no selected file.
 
     return resolved_media_path  # Return exact selected file path.
