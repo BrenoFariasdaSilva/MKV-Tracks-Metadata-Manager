@@ -1,5 +1,56 @@
 """
-Generate editable track-name rename reports for Matroska video files.
+================================================================================
+Track Metadata Report Generator
+================================================================================
+Author      : Breno Farias da Silva
+Created     : 2026-08-15
+Description :
+    Generates comprehensive JSON-based rename reports for Matroska video file
+    tracks. Analyzes embedded video, audio, and subtitle tracks and suggests
+    standardized naming conventions. Core worker module used by multiple CLI
+    entry points for report generation.
+
+    Key features include:
+        - Multi-format track analysis (video, audio, subtitle)
+        - Language detection and normalization
+        - Metadata inference from file paths and track properties
+        - Report versioning and change tracking
+        - JSON-based interchange format for other tools
+        - Progress bar feedback with detailed status logging
+
+Usage:
+    1. Call run_report_cli() from entry points (subtitle_report, auto_track_metadata_renamer)
+        from report import run_report_cli
+        run_report_cli(input_dir, output_format="json")
+    2. Or import report functions directly for programmatic use
+        from report import Report
+        report = Report(file_path, include_audio=True, include_subtitles=True)
+    3. Generated reports automatically saved to Reports/ directory
+
+Outputs:
+    - Reports/D-Sem*-audio_report.json (audio track analysis)
+    - Reports/D-Sem*-subtitles_report.json (subtitle track analysis)
+    - Logs/report.log (detailed execution log)
+    - Terminal output with progress bars and status updates
+
+TODOs:
+    - Implement incremental report updates for unchanged files
+    - Add support for custom naming templates and conventions
+    - Implement report merging for multi-source track data
+    - Add preview/diff mode before committing edits
+
+Dependencies:
+    - Python >= 3.8
+    - tqdm >= 4.70.0 (progress bars)
+    - colorama >= 0.4.6 (terminal colors)
+    - json (standard library)
+    - pathlib (standard library)
+
+Assumptions & Notes:
+    - Input directory contains valid Matroska files (.mkv, .mk3d)
+    - Reports stored in Reports/ folder with standardized naming
+    - Language detection uses langdetect library if text-based
+    - File modifications are tracked via mtime and file size
 """
 
 from __future__ import annotations  # Enable modern annotations on older supported Python versions.

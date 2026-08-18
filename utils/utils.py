@@ -1,5 +1,50 @@
 """
-Utility functions for timing and execution tracking.
+================================================================================
+Execution Timing Utilities
+================================================================================
+Author      : Breno Farias da Silva
+Created     : 2026-08-18
+Description :
+    Utility module providing execution timing functions and terminal formatting
+    helpers for comprehensive program performance reporting. Converts various
+    time representations to human-readable duration strings.
+
+    Key features include:
+        - Flexible time-to-seconds conversion (datetime, timedelta, numeric)
+        - Human-readable execution time formatting (days, hours, minutes, seconds)
+        - ANSI terminal color constants for consistent styling
+        - ISO 639-2 language code normalization
+        - Numeric millisecond to human-readable conversion
+
+Usage:
+    1. Import timing functions and call with start and finish datetimes
+        from utils.utils import calculate_execution_time
+        result = calculate_execution_time(start_time, finish_time)
+    2. Use BackgroundColors class for consistent terminal output coloring
+        from utils.utils import BackgroundColors
+        print(f"{BackgroundColors.GREEN}Success{BackgroundColors.RESET_ALL}")
+    3. Returns formatted strings suitable for terminal display
+
+Outputs:
+    - Human-readable execution time strings (e.g., "1h 2m 3s")
+    - ANSI-formatted colored terminal output
+    - Properly reset terminal colors after output
+
+TODOs:
+    - Add millisecond precision to timing output
+    - Implement performance profiling decorators
+    - Support for timer context managers
+    - Add benchmark comparison utilities
+
+Dependencies:
+    - Python >= 3.8
+    - datetime (standard library)
+
+Assumptions & Notes:
+    - Time inputs can be datetime, timedelta, or numeric (seconds)
+    - Output format is fixed at largest unit (days, hours, minutes, seconds)
+    - ANSI color codes may not work on all terminal emulators
+    - Negative durations are automatically converted to positive (absolute value)
 """
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.

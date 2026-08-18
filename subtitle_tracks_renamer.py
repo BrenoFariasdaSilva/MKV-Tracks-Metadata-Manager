@@ -1,5 +1,56 @@
 """
-Rename embedded subtitle-track name metadata from a subtitle report.
+================================================================================
+Subtitle Tracks Renamer
+================================================================================
+Author      : Breno Farias da Silva
+Created     : 2026-08-15
+Description :
+    Entry point for applying subtitle track metadata edits from generated reports
+    to Matroska video files. Reads subtitle rename reports and safely applies
+    metadata changes using mkvpropedit.
+
+    Key features include:
+        - CLI interface for subtitle rename operations
+        - Report-driven metadata application
+        - Safe mkvpropedit-based file modification
+        - Rollback and error recovery mechanisms
+        - Execution timing and progress feedback
+        - Detailed logging of all modifications
+
+Usage:
+    1. First generate subtitle reports using subtitle_report.py
+    2. Run renamer with generated reports
+        $ python subtitle_tracks_renamer.py /path/to/videos
+    3. Or invoke via Makefile
+        $ make rename_subtitles
+    4. Or call programmatically
+        from subtitle_tracks_renamer import run_rename_cli
+        run_rename_cli(input_directory, report_path)
+
+Outputs:
+    - Updated Matroska files with renamed subtitle tracks
+    - Logs/subtitle_tracks_renamer.log (detailed rename log)
+    - Console output with welcome message and timing information
+    - Backup copies of modified files (optional)
+
+TODOs:
+    - Implement automatic backup before applying edits
+    - Add transaction-like semantics for batch renames
+    - Support for undo/rollback operations
+    - Dry-run mode to preview changes before applying
+
+Dependencies:
+    - Python >= 3.8
+    - track_metadata_renamer module (core rename infrastructure)
+    - report module (report parsing and data structures)
+    - Logger module (dual-channel console/file logging)
+    - utils.utils module (timing and color utilities)
+
+Assumptions & Notes:
+    - Subtitle reports must exist and be recent
+    - Matroska files referenced in reports must still exist
+    - mkvpropedit must be installed and available in PATH
+    - File permissions allow modification of target Matroska files
 """
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.

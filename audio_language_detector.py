@@ -1,5 +1,50 @@
 """
-Detect audio-track language from metadata first, then sampled audio when needed.
+================================================================================
+Audio Language Detector
+================================================================================
+Author      : Breno Farias da Silva
+Created     : 2026-08-15
+Description :
+    Detects the language of audio tracks in Matroska video files using a
+    hierarchical approach: first checking metadata tags, then falling back to
+    sampled audio detection using OpenAI Whisper when metadata is unavailable.
+
+    Key features include:
+        - Metadata-first language detection from track properties
+        - Automatic fallback to audio sampling for untagged tracks
+        - OpenAI Whisper integration for acoustic language identification
+        - Language normalization to ISO 639-2 codes
+        - Configurable sampling duration and accuracy
+        - Multi-language detection for multilingual audio tracks
+
+Usage:
+    1. Import the module and call `detect_audio_track_language()`
+    2. Provide file path, metadata stream, track position, and duration
+    3. Optional: Enable sampled detection when metadata is insufficient
+        $ python -c "from audio_language_detector import detect_audio_track_language"
+    4. Returns normalized ISO 639-2 language code or empty string if detection fails
+
+Outputs:
+    - ISO 639-2 language codes (e.g., "eng", "por", "spa")
+    - Empty string if language cannot be determined
+    - Verbose logging when Whisper sampling occurs
+
+TODOs:
+    - Implement local language detection models for offline operation
+    - Add confidence scoring to detection results
+    - Cache Whisper model loading between successive calls
+    - Support for language probabilities instead of single selection
+
+Dependencies:
+    - Python >= 3.8
+    - openai-whisper >= 20250625 (optional, for audio sampling)
+    - langdetect >= 1.0.9 (for text language detection fallback)
+
+Assumptions & Notes:
+    - Audio tracks with BCP 47 language tags in metadata are trusted
+    - Whisper sampling uses a configurable subset of track audio
+    - Empty or unrecognized metadata is treated as unknown language
+    - Fallback to empty string allows graceful degradation in pipelines
 """
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.

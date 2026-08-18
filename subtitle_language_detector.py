@@ -1,5 +1,51 @@
 """
-Detect embedded subtitle-track language from metadata first, then subtitle text.
+================================================================================
+Subtitle Language Detector
+================================================================================
+Author      : Breno Farias da Silva
+Created     : 2026-08-15
+Description :
+    Detects the language of embedded subtitle tracks in Matroska video files
+    using a two-stage approach: metadata inspection first, then fallback to
+    text analysis when metadata is unavailable or unreliable.
+
+    Key features include:
+        - Metadata-first language detection from subtitle properties
+        - Subtitle extraction and text-based language detection
+        - Codec-aware extraction strategies (ASS, SRT, PGS, etc.)
+        - Configurable text sampling for performance
+        - Language normalization to ISO 639-2 codes
+        - Context-aware type detection (forced, hearing-impaired, etc.)
+
+Usage:
+    1. Import and call detect_subtitle_track_language() with file and metadata
+    2. Provide stream index, codec details, and optional duration
+    3. Optional: Enable text-based detection for untagged subtitles
+        $ python -c "from subtitle_language_detector import detect_subtitle_track_language"
+    4. Returns ISO 639-2 language code or empty string if detection fails
+
+Outputs:
+    - ISO 639-2 language codes (e.g., "eng", "por", "spa")
+    - Empty string if language cannot be determined
+    - Detailed logging for text extraction and detection
+
+TODOs:
+    - Implement OCR-based detection for bitmap subtitles (PGS, VOBSUB)
+    - Add confidence scoring and language probability distribution
+    - Support for polyglot subtitle detection (multiple languages)
+    - Cache extracted subtitle text between successive analyses
+
+Dependencies:
+    - Python >= 3.8
+    - langdetect >= 1.0.9 (for text-based language detection)
+    - re (standard library, for text parsing)
+    - pathlib (standard library)
+
+Assumptions & Notes:
+    - Subtitles with valid BCP 47 language tags are trusted implicitly
+    - Text extraction requires mkvextract or similar tool availability
+    - Small text samples may result in unreliable detection
+    - PGS and VOBSUB formats cannot be reliably detected via text analysis
 """
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.

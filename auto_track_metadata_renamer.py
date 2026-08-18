@@ -1,5 +1,53 @@
 """
-Run integrated MKV track metadata-name reporting and renaming.
+================================================================================
+Automatic Track Metadata Renamer
+================================================================================
+Author      : Breno Farias da Silva
+Created     : 2026-08-15
+Description :
+    Integrated CLI tool that combines audio and subtitle track reporting with
+    automatic metadata renaming in a single workflow. Scans Matroska files for
+    embedded tracks, generates detailed reports, and applies safe metadata edits.
+
+    Key features include:
+        - Unified report generation for video, audio, and subtitle tracks
+        - Automatic language detection for unnamed tracks
+        - Safe mkvpropedit-based metadata application
+        - Default audio and subtitle track assignment
+        - Detailed execution summary with timing information
+        - Progress bar feedback during long operations
+
+Usage:
+    1. Configure input directory and track selection flags
+    2. Run the automatic workflow via Makefile or direct invocation
+        $ make process  or  $ python auto_track_metadata_renamer.py
+    3. Review generated reports in Reports/ directory
+    4. Automatic renaming applies edits from most recent reports
+
+Outputs:
+    - Reports/D-Sem*-audio_report.json (audio track report)
+    - Reports/D-Sem*-subtitles_report.json (subtitle track report)
+    - Logs/auto_track_metadata_renamer.log (execution log)
+    - Renamed Matroska files with updated track metadata
+
+TODOs:
+    - Implement dry-run mode to preview changes without applying edits
+    - Add rollback capability for failed rename operations
+    - Support for external report import from other tools
+    - Parallel file processing for faster large-batch operations
+
+Dependencies:
+    - Python >= 3.8
+    - MKVToolNix >= 70 (mkvpropedit, mkvmerge)
+    - ffmpeg (ffprobe for metadata inspection)
+    - tqdm >= 4.70.0 (progress bar display)
+    - colorama >= 0.4.6 (terminal colors)
+
+Assumptions & Notes:
+    - Input directory contains Matroska files (.mkv, .mk3d)
+    - Reports are synchronized with files before each rename operation
+    - Default language selection prioritizes most common track
+    - Failed renames do not halt the workflow; see log for details
 """
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.

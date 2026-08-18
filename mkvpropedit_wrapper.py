@@ -1,5 +1,52 @@
 """
-Isolated mkvpropedit interface for safe track metadata edits.
+================================================================================
+MKVPropedit Wrapper Interface
+================================================================================
+Author      : Breno Farias da Silva
+Created     : 2026-08-15
+Description :
+    A safe, isolated interface to MKVToolNix command-line tools (mkvpropedit
+    and mkvmerge) for reading and modifying Matroska track metadata. Provides
+    type-safe abstractions for common track editing operations.
+
+    Key features include:
+        - Typed data structures for track metadata operations
+        - Safe subprocess execution with argument validation
+        - Automatic MKVToolNix installation detection
+        - Track selector building with format validation
+        - Error handling and detailed failure reporting
+        - Support for video, audio, and subtitle track edits
+
+Usage:
+    1. Import and create TrackMetadataEdit structures for desired changes
+        from mkvpropedit_wrapper import TrackMetadataEdit
+        edit = TrackMetadataEdit(track_id="1", name="English")
+    2. Build track selectors and validate against Matroska specs
+        selector = build_track_selector(track_type="a", track_id="1")
+    3. Apply edits safely via apply_track_metadata_edits()
+
+Outputs:
+    - Modified Matroska files with updated track metadata
+    - Detailed operation results with success/failure status
+    - Error messages for diagnostics and troubleshooting
+
+TODOs:
+    - Support for advanced properties (forced flag, default flag)
+    - Batch operations with transaction-like semantics
+    - Rollback capability for failed edit sequences
+    - Dry-run preview before applying edits
+
+Dependencies:
+    - Python >= 3.8
+    - MKVToolNix >= 70 (mkvpropedit, mkvmerge commands)
+    - Pathlib (standard library)
+    - Subprocess (standard library)
+
+Assumptions & Notes:
+    - MKVToolNix must be installed and available in PATH
+    - Matroska files must be valid and readable
+    - Track IDs refer to MKVToolNix logical numbering
+    - Edits are atomic at the file level (all-or-nothing)
 """
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
