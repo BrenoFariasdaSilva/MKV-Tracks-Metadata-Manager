@@ -1019,21 +1019,24 @@ def build_subtitle_report_data(tracks: list[SubtitleTrackRecord], existing_desir
     return report_data  # Return deterministic report data.
 
 
-def write_report(report_path: Path, report_data: dict[str, dict[str, str]]) -> None:
+def write_report(report_path: Path, report_data: dict[str, dict[str, str]]) -> bool:
     """
     Write report JSON safely and atomically.
 
     :param report_path: Destination report path.
     :param report_data: Report JSON data.
-    :return: None.
+    :return: True when a non-empty report was written.
     """
 
+    if not report_data:  # Verify the report has at least one group before creating a file.
+        return False  # Skip writing empty reports.
     report_path.parent.mkdir(parents=True, exist_ok=True)  # Ensure output directory exists.
     serialized_report = json.dumps(report_data, ensure_ascii=False, indent=4) + "\n"  # Serialize readable UTF-8 JSON.
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=report_path.parent, delete=False, newline="\n") as temp_file:  # Create temporary report file.
         temp_file.write(serialized_report)  # Write complete JSON payload.
         temp_name = temp_file.name  # Store temporary file path.
     os.replace(temp_name, report_path)  # Atomically replace final report.
+    return True  # Report successful non-empty write.
 
 
 def generate_audio_report(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, selected_file: str | None = None) -> dict[str, dict[str, str]]:
@@ -1055,8 +1058,10 @@ def generate_audio_report(input_dir: str = INPUT_DIR, report_path: str | Path | 
     existing_desired_names = read_existing_desired_names(output_path)  # Preserve safe manual desired names.
     tracks = collect_audio_tracks(root_path, selected_file)  # Collect all audio tracks.
     report_data = build_audio_report_data(tracks, existing_desired_names)  # Build report JSON object.
-    write_report(output_path, report_data)  # Write report safely.
-    print(f"Report written: {output_path}")  # Report output path.
+    if write_report(output_path, report_data):  # Write report only when non-empty.
+        print(f"Report written: {output_path}")  # Report output path.
+    else:  # Report skipped empty output explicitly.
+        print(f"Report empty, not written: {output_path}")  # Report skipped empty report path.
     return report_data  # Return generated data.
 
 
@@ -1079,8 +1084,10 @@ def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: str | Path
     existing_desired_names = read_existing_desired_names(output_path)  # Preserve safe manual desired names.
     tracks = collect_subtitle_tracks(root_path, selected_file)  # Collect all embedded subtitle tracks.
     report_data = build_subtitle_report_data(tracks, existing_desired_names)  # Build subtitle report JSON object.
-    write_report(output_path, report_data)  # Write subtitle report safely.
-    print(f"Subtitle report written: {output_path}")  # Report output path.
+    if write_report(output_path, report_data):  # Write subtitle report only when non-empty.
+        print(f"Subtitle report written: {output_path}")  # Report output path.
+    else:  # Report skipped empty output explicitly.
+        print(f"Subtitle report empty, not written: {output_path}")  # Report skipped empty subtitle report path.
     return report_data  # Return generated data.
 
 

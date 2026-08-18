@@ -313,8 +313,10 @@ def write_unresolved_audio_report(summary: RenameSummary, unresolved_report_path
 
     existing_desired_names = read_existing_desired_names(unresolved_report_path)  # Preserve manual desired names from prior unresolved report.
     report_data = build_audio_report_data(summary.unresolved_audio_tracks, existing_desired_names)  # Build normal audio report shape for unresolved tracks.
-    write_report(unresolved_report_path, report_data)  # Write unresolved report atomically.
-    print(f"Unresolved audio report written: {unresolved_report_path} ({len(summary.unresolved_audio_tracks)} occurrence(s))")  # Report unresolved output path.
+    if write_report(unresolved_report_path, report_data):  # Write unresolved report only when non-empty.
+        print(f"Unresolved audio report written: {unresolved_report_path} ({len(summary.unresolved_audio_tracks)} occurrence(s))")  # Report unresolved output path.
+    else:  # Report skipped empty unresolved output explicitly.
+        print(f"Unresolved audio report empty, not written: {unresolved_report_path}")  # Report skipped empty unresolved report path.
 
 
 def collect_planned_renames(report_data: dict[str, Any], input_dir: Path, summary: RenameSummary) -> list[PlannedRename]:
