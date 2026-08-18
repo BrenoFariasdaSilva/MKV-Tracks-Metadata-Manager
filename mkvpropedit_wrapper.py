@@ -21,6 +21,7 @@ class TrackMetadataEdit:
     current_name: str  # Store current track name before editing.
     new_name: str | None = None  # Store target track name when selected.
     default_flag: bool | None = None  # Store target default flag when selected.
+    forced_flag: bool | None = None  # Store target forced flag when selected.
 
 
 @dataclass(frozen=True)
@@ -126,7 +127,8 @@ def merge_track_metadata_edits(edits: list[TrackMetadataEdit]) -> list[TrackMeta
 
         new_name = edit.new_name if edit.new_name is not None else existing_edit.new_name  # Prefer latest explicit name.
         default_flag = edit.default_flag if edit.default_flag is not None else existing_edit.default_flag  # Prefer latest explicit default flag.
-        merged_edits[edit.track_selector] = TrackMetadataEdit(edit.track_selector, existing_edit.current_name, new_name, default_flag)  # Store merged selector operation.
+        forced_flag = edit.forced_flag if edit.forced_flag is not None else existing_edit.forced_flag  # Prefer latest explicit forced flag.
+        merged_edits[edit.track_selector] = TrackMetadataEdit(edit.track_selector, existing_edit.current_name, new_name, default_flag, forced_flag)  # Store merged selector operation.
 
     return list(merged_edits.values())  # Return merged operations in insertion order.
 
@@ -163,6 +165,22 @@ def append_default_flag_setter(command: list[str], edit: TrackMetadataEdit) -> i
     return 1  # Return appended setter count.
 
 
+def append_forced_flag_setter(command: list[str], edit: TrackMetadataEdit) -> int:
+    """
+    Append one safe forced-flag setter when needed.
+
+    :param command: Mutable mkvpropedit command arguments.
+    :param edit: Track metadata edit operation.
+    :return: Number of appended setters.
+    """
+
+    if edit.forced_flag is None:  # Verify forced flag setter was requested.
+        return 0  # Return no appended setter.
+    flag_value = "1" if edit.forced_flag else "0"  # Convert boolean flag to mkvpropedit value.
+    command.extend(["--set", f"flag-forced={flag_value}"])  # Add forced-flag setter.
+    return 1  # Return appended setter count.
+
+
 def build_mkvpropedit_arguments(file_path: Path, edits: list[TrackMetadataEdit], executable: str = "mkvpropedit") -> list[str]:
     """
     Build a safe mkvpropedit argument list for permitted track metadata.
@@ -180,6 +198,7 @@ def build_mkvpropedit_arguments(file_path: Path, edits: list[TrackMetadataEdit],
         edit_group = ["--edit", edit.track_selector]  # Start one track edit group.
         setter_count = append_name_setter(edit_group, edit)  # Add name setter when needed.
         setter_count += append_default_flag_setter(edit_group, edit)  # Add default-flag setter when needed.
+        setter_count += append_forced_flag_setter(edit_group, edit)  # Add forced-flag setter when needed.
         if setter_count == 0:  # Verify group has at least one setter.
             continue  # Skip no-op edit group.
         command.extend(edit_group)  # Add complete track edit group.
@@ -199,6 +218,8 @@ def valid_setter_argument(track_selector: str, setter_value: str) -> bool:
         return True  # Accept track-name setter.
     if setter_value in {"flag-default=0", "flag-default=1"} and (track_selector.startswith("track:a") or track_selector.startswith("track:s") or track_selector.startswith("track:=")):  # Verify audio/subtitle default flag setter.
         return True  # Accept default flag setter.
+    if setter_value in {"flag-forced=0"} and (track_selector.startswith("track:a") or track_selector.startswith("track:=")):  # Verify audio forced-flag clear is permitted.
+        return True  # Accept audio forced-flag clear setter.
     return False  # Reject every other property.
 
 

@@ -686,10 +686,15 @@ def plan_default_audio_edits(file_path: Path, plans: list[PlannedRename], input_
     operations: list[TrackMetadataEdit] = []  # Store default-flag operations.
     for current_track in current_tracks:  # Iterate every audio track to enforce one default.
         target_default = current_track.audio_position == target_position  # Resolve desired default flag.
-        if current_track.default_track == target_default:  # Verify current default flag already matches.
-            continue  # Skip no-op default flag.
+        target_forced = False  # Audio tracks must never stay forced because that overrides the chosen default.
+        current_default_matches = current_track.default_track == target_default  # Store whether default flag already matches target.
+        current_forced_matches = current_track.forced_track == target_forced  # Store whether forced flag already matches safe state.
+        if current_default_matches and current_forced_matches:  # Verify both flags already match.
+            continue  # Skip no-op default and forced flags.
         track_selector = build_track_selector("a", current_track.audio_position, current_track.track_uid)  # Prefer Matroska Track UID selector when available.
-        operations.append(TrackMetadataEdit(track_selector, current_track.current_name, None, target_default))  # Store default-flag operation.
+        default_flag = target_default if not current_default_matches else None  # Include default setter only when it needs a change.
+        forced_flag = target_forced if not current_forced_matches else None  # Include forced setter only when it needs a change.
+        operations.append(TrackMetadataEdit(track_selector, current_track.current_name, None, default_flag, forced_flag))  # Store safe audio flag operation.
 
     if not operations:  # Verify whether default flags already match requested state.
         summary.default_already += 1  # Count idempotent default state.
