@@ -481,6 +481,23 @@ def discover_supported_files(input_dir: Path, selected_file: str | None = None) 
     return sorted(supported_files, key=lambda path: path.as_posix().lower())  # Return deterministic file order.
 
 
+def read_media_file_issue(file_path: Path) -> str:
+    """
+    Read an early validation issue for one media file.
+
+    :param file_path: Media file path.
+    :return: Human-readable issue text, or empty text when the file can be probed.
+    """
+
+    try:  # Read current file size safely.
+        file_size = file_path.stat().st_size  # Resolve file size in bytes.
+    except OSError as error:  # Handle unreadable filesystem entries.
+        return f"unreadable media file: {error}"  # Return early filesystem failure.
+    if file_size == 0:  # Verify file contains any bytes before external tools run.
+        return "empty media file (0 bytes)"  # Return zero-byte failure reason.
+    return ""  # Return no early issue.
+
+
 def probe_media(file_path: Path) -> dict[str, Any]:
     """
     Read ffprobe stream and format metadata for one media file.
@@ -489,6 +506,10 @@ def probe_media(file_path: Path) -> dict[str, Any]:
     :return: Parsed ffprobe metadata.
     """
 
+    file_issue = read_media_file_issue(file_path)  # Validate obvious filesystem issues before ffprobe.
+    if file_issue != "":  # Verify media file can be probed safely.
+        print(f"Skipping {file_path}: {file_issue}")  # Report early invalid file.
+        return {"streams": [], "format": {}}  # Return empty metadata.
     executable = find_executable("ffprobe") or "ffprobe"  # Locate ffprobe executable.
     command = [executable, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(file_path)]  # Build ffprobe command.
     try:  # Execute ffprobe safely.
@@ -518,6 +539,9 @@ def probe_mkvmerge(file_path: Path) -> dict[str, Any]:
     :return: Parsed mkvmerge metadata.
     """
 
+    file_issue = read_media_file_issue(file_path)  # Validate obvious filesystem issues before mkvmerge.
+    if file_issue != "":  # Verify media file can be inspected safely.
+        return {"tracks": []}  # Return empty metadata after early report from ffprobe path or caller.
     executable = find_executable("mkvmerge")  # Locate mkvmerge executable.
     if executable is None:  # Verify mkvmerge is available.
         print(f"mkvmerge unavailable for {file_path}: executable not found")  # Report missing mkvmerge.
@@ -752,9 +776,16 @@ def read_audio_tracks(file_path: Path, input_dir: Path, detect_language: bool) -
     :return: Audio-track records.
     """
 
+    file_issue = read_media_file_issue(file_path)  # Validate obvious filesystem issues before deeper track work.
+    if file_issue != "":  # Verify media file can be inspected safely.
+        print(f"Skipping {file_path}: {file_issue}")  # Report early invalid file.
+        return []  # Return no audio tracks for invalid media.
     ffprobe_data = probe_media(file_path)  # Read duration metadata from ffprobe.
     mkvmerge_data = probe_mkvmerge(file_path)  # Read track order metadata from MKVToolNix.
     mkvmerge_audio_tracks = read_mkvmerge_audio_tracks(mkvmerge_data)  # Read audio tracks in mkvpropedit selector order.
+    if not ffprobe_data.get("streams") and not mkvmerge_audio_tracks:  # Verify the file produced usable container metadata.
+        print(f"Skipping corrupt or unreadable Matroska file before audio detection: {file_path}")  # Report early corruption skip.
+        return []  # Return no audio tracks for corrupt media.
     format_duration = read_format_duration(ffprobe_data)  # Read format duration.
     audio_tracks: list[AudioTrackRecord] = []  # Store audio records.
 
@@ -781,8 +812,15 @@ def read_video_tracks(file_path: Path, input_dir: Path) -> list[VideoTrackRecord
     :return: Video-track records.
     """
 
+    file_issue = read_media_file_issue(file_path)  # Validate obvious filesystem issues before video inspection.
+    if file_issue != "":  # Verify media file can be inspected safely.
+        print(f"Skipping {file_path}: {file_issue}")  # Report early invalid file.
+        return []  # Return no video tracks for invalid media.
     mkvmerge_data = probe_mkvmerge(file_path)  # Read track order metadata from MKVToolNix.
     mkvmerge_video_tracks = read_mkvmerge_video_tracks(mkvmerge_data)  # Read video tracks in mkvpropedit selector order.
+    if not mkvmerge_video_tracks:  # Verify the file produced usable Matroska track metadata.
+        print(f"Skipping corrupt or unreadable Matroska file before video rename planning: {file_path}")  # Report early corruption skip.
+        return []  # Return no video tracks for corrupt media.
     video_tracks: list[VideoTrackRecord] = []  # Store video records.
 
     for video_position, track in enumerate(mkvmerge_video_tracks):  # Iterate video tracks in MKVToolNix order.
@@ -805,9 +843,16 @@ def read_subtitle_tracks(file_path: Path, input_dir: Path, detect_language: bool
     :return: Subtitle-track records.
     """
 
+    file_issue = read_media_file_issue(file_path)  # Validate obvious filesystem issues before deeper track work.
+    if file_issue != "":  # Verify media file can be inspected safely.
+        print(f"Skipping {file_path}: {file_issue}")  # Report early invalid file.
+        return []  # Return no subtitle tracks for invalid media.
     ffprobe_data = probe_media(file_path)  # Read duration metadata from ffprobe.
     mkvmerge_data = probe_mkvmerge(file_path)  # Read track order metadata from MKVToolNix.
     mkvmerge_subtitle_tracks = read_mkvmerge_subtitle_tracks(mkvmerge_data)  # Read subtitle tracks in mkvpropedit selector order.
+    if not ffprobe_data.get("streams") and not mkvmerge_subtitle_tracks:  # Verify the file produced usable container metadata.
+        print(f"Skipping corrupt or unreadable Matroska file before subtitle detection: {file_path}")  # Report early corruption skip.
+        return []  # Return no subtitle tracks for corrupt media.
     format_duration = read_format_duration(ffprobe_data)  # Read format duration.
     subtitle_tracks: list[SubtitleTrackRecord] = []  # Store subtitle records.
 
