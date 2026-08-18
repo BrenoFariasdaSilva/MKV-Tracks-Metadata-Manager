@@ -14,42 +14,56 @@ Metadata-only Matroska track metadata renamer that generates human-editable audi
 
 </div>
 
+</div>
+
 <div align="center">
 
-![GitHub Build/WorkFlow](https://img.shields.io/github/actions/workflow/status/BrenoFariasDaSilva/MKV-Track-Metadata-Manager/update-worked-example-miner-submodule.yml)
-![GitHub Code Size in Bytes](https://img.shields.io/github/languages/code-size/BrenoFariasdaSilva/MKV-Track-Metadata-Manager)
-![GitHub Last Commit](https://img.shields.io/github/last-commit/BrenoFariasdaSilva/MKV-Track-Metadata-Manager)
-![GitHub](https://img.shields.io/github/license/BrenoFariasdaSilva/MKV-Track-Metadata-Manager)
+![GitHub Code Size in Bytes](https://img.shields.io/github/languages/code-size/BrenoFariasdaSilva/MKV-Tracks-Metadata-Manager)
+![GitHub Commits](https://img.shields.io/github/commit-activity/t/BrenoFariasdaSilva/MKV-Tracks-Metadata-Manager/main)
+![GitHub Last Commit](https://img.shields.io/github/last-commit/BrenoFariasdaSilva/MKV-Tracks-Metadata-Manager)
+![GitHub Forks](https://img.shields.io/github/forks/BrenoFariasdaSilva/MKV-Tracks-Metadata-Manager)
+![GitHub Language Count](https://img.shields.io/github/languages/count/BrenoFariasdaSilva/MKV-Tracks-Metadata-Manager)
+![GitHub License](https://img.shields.io/github/license/BrenoFariasdaSilva/MKV-Tracks-Metadata-Manager)
+![GitHub Stars](https://img.shields.io/github/stars/BrenoFariasdaSilva/MKV-Tracks-Metadata-Manager)
+![GitHub Contributors](https://img.shields.io/github/contributors/BrenoFariasdaSilva/MKV-Tracks-Metadata-Manager)
+![GitHub Created At](https://img.shields.io/github/created-at/BrenoFariasdaSilva/MKV-Tracks-Metadata-Manager)
+![wakatime](https://wakatime.com/badge/github/BrenoFariasdaSilva/MKV-Tracks-Metadata-Manager.svg)
+
+</div>
+
+<div align="center">
+  
+![RepoBeats Statistics](https://repobeats.axiom.co/api/embed/d65134ffd9991aeacd14b0a9ae5ce3f9c1528dfa.svg "Repobeats analytics image")
 
 </div>
 
 ## Table of Contents
-- [MKV Tracks Metadata Manager. ](#mkv-track-metadata-manager-)
-	- [Table of Contents](#table-of-contents)
-	- [Introduction](#introduction)
-	- [Setup](#setup)
-		- [Clone the repository](#clone-the-repository)
-	- [Installation:](#installation)
-		- [Windows](#windows)
-		- [Linux](#linux)
-		- [macOS](#macos)
-	- [Run Python Code:](#run-python-code)
-		- [Makefile CLI](#makefile-cli)
-		- [Generate reports](#generate-reports)
-		- [Review desired\_new\_name](#review-desired_new_name)
-		- [Rename from reviewed reports](#rename-from-reviewed-reports)
-		- [Default audio selection](#default-audio-selection)
-		- [Default subtitle selection](#default-subtitle-selection)
-		- [Integrated process workflow](#integrated-process-workflow)
-		- [Logging](#logging)
-		- [Direct Python execution](#direct-python-execution)
-		- [Dependencies](#dependencies)
-	- [Project Structure](#project-structure)
-	- [Safety Notes](#safety-notes)
-	- [Contributing](#contributing)
-	- [Collaborators](#collaborators)
-	- [License](#license)
-		- [Apache License 2.0](#apache-license-20)
+- [MKV Tracks Metadata Manager. ](#mkv-tracks-metadata-manager-)
+  - [Table of Contents](#table-of-contents)
+  - [Introduction](#introduction)
+  - [Setup](#setup)
+    - [Clone the repository](#clone-the-repository)
+  - [Installation:](#installation)
+    - [Windows](#windows)
+    - [Linux](#linux)
+    - [macOS](#macos)
+  - [Run Python Code:](#run-python-code)
+    - [Makefile CLI](#makefile-cli)
+    - [Generate reports](#generate-reports)
+    - [Review desired\_new\_name](#review-desired_new_name)
+    - [Rename from reviewed reports](#rename-from-reviewed-reports)
+    - [Default audio selection](#default-audio-selection)
+    - [Default subtitle selection](#default-subtitle-selection)
+    - [Integrated process workflow](#integrated-process-workflow)
+    - [Logging](#logging)
+    - [Direct Python execution](#direct-python-execution)
+    - [Dependencies](#dependencies)
+  - [Project Structure](#project-structure)
+  - [Safety Notes](#safety-notes)
+  - [Contributing](#contributing)
+  - [Collaborators](#collaborators)
+  - [License](#license)
+    - [Apache License 2.0](#apache-license-20)
 
 ## Introduction
 
