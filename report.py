@@ -21,7 +21,7 @@ from audio_language_detector import detect_audio_track_language, normalize_langu
 from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
 from subtitle_language_detector import detect_subtitle_track_language  # Resolve metadata or text subtitle language.
-from utils.utils import calculate_execution_time, BackgroundColors, Style  # Track and display execution time.
+from utils.utils import calculate_execution_time, BackgroundColors  # Track and display execution time.
 
 # Constants:
 
@@ -1157,7 +1157,7 @@ def main() -> None:
     sys.stderr = logger  # Mirror standard error to terminal and log file.
     
     print(
-        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Welcome to the {BackgroundColors.CYAN}Report Generator{BackgroundColors.GREEN} program!{Style.RESET_ALL}",
+        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Welcome to the {BackgroundColors.CYAN}Report Generator{BackgroundColors.GREEN} program!{BackgroundColors.RESET_ALL}",
         end="\n\n",
     )  # Output the welcome message
     
@@ -1168,11 +1168,11 @@ def main() -> None:
     finish_time = datetime.datetime.now()  # Get the finish time of the program
     
     print(
-        f"{BackgroundColors.GREEN}Start time: {BackgroundColors.CYAN}{start_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Finish time: {BackgroundColors.CYAN}{finish_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Execution time: {BackgroundColors.CYAN}{calculate_execution_time(start_time, finish_time)}{Style.RESET_ALL}"
+        f"{BackgroundColors.GREEN}Start time: {BackgroundColors.CYAN}{start_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Finish time: {BackgroundColors.CYAN}{finish_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Execution time: {BackgroundColors.CYAN}{calculate_execution_time(start_time, finish_time)}{BackgroundColors.RESET_ALL}"
     )  # Output the start and finish times
     
     print(
-        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Program finished.{Style.RESET_ALL}"
+        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Program finished.{BackgroundColors.RESET_ALL}"
     )  # Output the end of the program message
     
     sys.exit(status)  # Run CLI and return process status.
