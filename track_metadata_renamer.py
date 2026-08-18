@@ -15,7 +15,7 @@ from tqdm import tqdm  # Display rename progress without flooding the terminal.
 from audio_language_detector import normalize_language_value  # Reuse canonical language normalization.
 from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, apply_track_metadata_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
-from report import AUDIO_REPORT_FILENAME, INPUT_DIR, PROGRESS_BAR_FORMAT, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, BackgroundColors, build_audio_report_data, build_subtitle_detected_name, discover_supported_files, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
+from report import AUDIO_REPORT_FILENAME, INPUT_DIR, PROGRESS_BAR_FORMAT, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, TERMINAL_RESET, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, BackgroundColors, build_audio_report_data, build_subtitle_detected_name, discover_supported_files, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
 
 
 @dataclass
@@ -174,13 +174,45 @@ def print_rename_summary(summary: RenameSummary, include_defaults: bool = True) 
     """
 
     if include_defaults:  # Verify default counters belong to this workflow summary.
-        print(f"Summary: planned={summary.planned}, changed={summary.changed}, default_planned={summary.default_planned}, default_changed={summary.default_changed}, default_already={summary.default_already}, default_missing={summary.default_missing}, default_ambiguous={summary.default_ambiguous}, subtitle_default_planned={summary.subtitle_default_planned}, subtitle_default_changed={summary.subtitle_default_changed}, subtitle_default_already={summary.subtitle_default_already}, subtitle_default_missing={summary.subtitle_default_missing}, subtitle_default_ambiguous={summary.subtitle_default_ambiguous}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
+        summary_text = f"planned={summary.planned}, changed={summary.changed}, default_planned={summary.default_planned}, default_changed={summary.default_changed}, default_already={summary.default_already}, default_missing={summary.default_missing}, default_ambiguous={summary.default_ambiguous}, subtitle_default_planned={summary.subtitle_default_planned}, subtitle_default_changed={summary.subtitle_default_changed}, subtitle_default_already={summary.subtitle_default_already}, subtitle_default_missing={summary.subtitle_default_missing}, subtitle_default_ambiguous={summary.subtitle_default_ambiguous}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}"  # Build detailed summary values.
     else:  # Print compact subtitle-only summary.
-        print(f"Summary: planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
+        summary_text = f"planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}"  # Build compact summary values.
+    print(f"{BackgroundColors.GREEN}Summary:{BackgroundColors.CYAN} {summary_text}{TERMINAL_RESET}")  # Report summary counts with consistent colors.
     for message in summary.messages:  # Iterate accumulated messages.
         if message_is_progress_only(message):  # Skip informational messages already represented by the live progress bar.
             continue  # Avoid multi-line noise for idempotent cases.
-        print(message)  # Report standalone errors and warnings only.
+        print(format_log_message(message))  # Report standalone errors and warnings only.
+
+
+def classify_message_color(message: str) -> str:
+    """
+    Resolve the severity color for one standalone workflow message.
+
+    :param message: Workflow message text.
+    :return: ANSI color escape sequence.
+    """
+
+    normalized_message = message.casefold()  # Normalize text for stable severity checks.
+    if "warning" in normalized_message or "group count mismatch" in normalized_message or "skipped malformed" in normalized_message:  # Detect warning-like messages.
+        return BackgroundColors.YELLOW  # Render warnings in yellow.
+    if "failed" in normalized_message or "mismatch" in normalized_message or "missing" in normalized_message or "not found" in normalized_message or "unsupported" in normalized_message:  # Detect error-like messages.
+        return BackgroundColors.RED  # Render failures in red.
+    return BackgroundColors.GREEN  # Render ordinary informational messages in green.
+
+
+def format_log_message(message: str) -> str:
+    """
+    Format one standalone workflow message with severity colors and cyan dynamic values.
+
+    :param message: Workflow message text.
+    :return: Colorized message text.
+    """
+
+    message_color = classify_message_color(message)  # Resolve base severity color.
+    prefix, separator, suffix = message.partition(": ")  # Split stable message label from dynamic detail when present.
+    if separator == "":  # Verify whether the message has a natural detail separator.
+        return f"{message_color}{message}{TERMINAL_RESET}"  # Render the whole message in one severity color.
+    return f"{message_color}{prefix}:{BackgroundColors.CYAN} {suffix}{TERMINAL_RESET}"  # Render labels in severity color and details in cyan.
 
 
 def load_report_data(report_path: Path) -> dict[str, Any] | None:
