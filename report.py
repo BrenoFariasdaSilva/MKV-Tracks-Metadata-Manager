@@ -50,6 +50,19 @@ SUBTITLE_OCCURRENCE_SUFFIX_PATTERN = re.compile(r"^(?P<path>.+) \[subtitle:(?P<s
 GROUP_KEY_PATTERN = re.compile(r"^(?P<name>.*) \((?P<count>\d+)\)$")  # Parse grouped current-name keys.
 
 
+def format_colored_status(label: str, detail: object, color: str = BackgroundColors.GREEN) -> str:
+    """
+    Format one status line with colored fixed text and cyan dynamic detail.
+
+    :param label: Fixed message text.
+    :param detail: Dynamic value to render after the label.
+    :param color: ANSI color for the fixed message text.
+    :return: Colorized status line.
+    """
+
+    return f"{color}{label}: {BackgroundColors.CYAN}{detail}{TERMINAL_RESET}"  # Render the fixed message in severity color and the dynamic detail in cyan.
+
+
 def build_report_prefix(input_dir: str) -> str:
     """
     Build a filename-safe report prefix from an input directory.
@@ -1059,9 +1072,9 @@ def generate_audio_report(input_dir: str = INPUT_DIR, report_path: str | Path | 
     tracks = collect_audio_tracks(root_path, selected_file)  # Collect all audio tracks.
     report_data = build_audio_report_data(tracks, existing_desired_names)  # Build report JSON object.
     if write_report(output_path, report_data):  # Write report only when non-empty.
-        print(f"Report written: {output_path}")  # Report output path.
+        print(format_colored_status("Report written", output_path))  # Report output path with consistent colors.
     else:  # Report skipped empty output explicitly.
-        print(f"Report empty, not written: {output_path}")  # Report skipped empty report path.
+        print(format_colored_status("Report empty, not written", output_path))  # Report skipped empty report path with consistent colors.
     return report_data  # Return generated data.
 
 
@@ -1085,9 +1098,9 @@ def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: str | Path
     tracks = collect_subtitle_tracks(root_path, selected_file)  # Collect all embedded subtitle tracks.
     report_data = build_subtitle_report_data(tracks, existing_desired_names)  # Build subtitle report JSON object.
     if write_report(output_path, report_data):  # Write subtitle report only when non-empty.
-        print(f"Subtitle report written: {output_path}")  # Report output path.
+        print(format_colored_status("Subtitle report written", output_path))  # Report output path with consistent colors.
     else:  # Report skipped empty output explicitly.
-        print(f"Subtitle report empty, not written: {output_path}")  # Report skipped empty subtitle report path.
+        print(format_colored_status("Subtitle report empty, not written", output_path))  # Report skipped empty subtitle report path with consistent colors.
     return report_data  # Return generated data.
 
 

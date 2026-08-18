@@ -15,7 +15,7 @@ from tqdm import tqdm  # Display rename progress without flooding the terminal.
 from audio_language_detector import normalize_language_value  # Reuse canonical language normalization.
 from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, apply_track_metadata_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
-from report import AUDIO_REPORT_FILENAME, INPUT_DIR, PROGRESS_BAR_FORMAT, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, TERMINAL_RESET, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, BackgroundColors, build_audio_report_data, build_subtitle_detected_name, discover_supported_files, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
+from report import AUDIO_REPORT_FILENAME, INPUT_DIR, PROGRESS_BAR_FORMAT, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, TERMINAL_RESET, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, BackgroundColors, build_audio_report_data, build_subtitle_detected_name, discover_supported_files, format_colored_status, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
 
 
 @dataclass
@@ -178,7 +178,7 @@ def print_rename_summary(summary: RenameSummary, include_defaults: bool = True) 
         summary_text = f"planned={summary.planned}, changed={summary.changed}, default_planned={summary.default_planned}, default_changed={summary.default_changed}, default_already={summary.default_already}, default_missing={summary.default_missing}, default_ambiguous={summary.default_ambiguous}, subtitle_default_planned={summary.subtitle_default_planned}, subtitle_default_changed={summary.subtitle_default_changed}, subtitle_default_already={summary.subtitle_default_already}, subtitle_default_missing={summary.subtitle_default_missing}, subtitle_default_ambiguous={summary.subtitle_default_ambiguous}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}"  # Build detailed summary values.
     else:  # Print compact subtitle-only summary.
         summary_text = f"planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}"  # Build compact summary values.
-    print(f"{BackgroundColors.GREEN}Summary:{BackgroundColors.CYAN} {summary_text}{TERMINAL_RESET}")  # Report summary counts with consistent colors.
+    print(f"\n{BackgroundColors.GREEN}Summary:{BackgroundColors.CYAN} {summary_text}{TERMINAL_RESET}")  # Report summary counts with consistent colors.
     for message in summary.messages:  # Iterate accumulated messages.
         if message_is_progress_only(message):  # Skip informational messages already represented by the live progress bar.
             continue  # Avoid multi-line noise for idempotent cases.
@@ -315,9 +315,9 @@ def write_unresolved_audio_report(summary: RenameSummary, unresolved_report_path
     existing_desired_names = read_existing_desired_names(unresolved_report_path)  # Preserve manual desired names from prior unresolved report.
     report_data = build_audio_report_data(summary.unresolved_audio_tracks, existing_desired_names)  # Build normal audio report shape for unresolved tracks.
     if write_report(unresolved_report_path, report_data):  # Write unresolved report only when non-empty.
-        print(f"Unresolved audio report written: {unresolved_report_path} ({len(summary.unresolved_audio_tracks)} occurrence(s))")  # Report unresolved output path.
+        print(format_colored_status("Unresolved audio report written", f"{unresolved_report_path} ({len(summary.unresolved_audio_tracks)} occurrence(s))"))  # Report unresolved output path with consistent colors.
     else:  # Report skipped empty unresolved output explicitly.
-        print(f"Unresolved audio report empty, not written: {unresolved_report_path}")  # Report skipped empty unresolved report path.
+        print(format_colored_status("Unresolved audio report empty, not written", unresolved_report_path))  # Report skipped empty unresolved report path with consistent colors.
 
 
 def collect_planned_renames(report_data: dict[str, Any], input_dir: Path, summary: RenameSummary) -> list[PlannedRename]:
