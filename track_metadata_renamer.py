@@ -10,11 +10,12 @@ from pathlib import Path  # Represent filesystem paths.
 from typing import Any  # Type dynamic JSON data.
 import json  # Read report JSON.
 import sys  # Return meaningful CLI exit statuses.
+from tqdm import tqdm  # Display rename progress without flooding the terminal.
 
 from audio_language_detector import normalize_language_value  # Reuse canonical language normalization.
 from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, apply_track_metadata_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
-from report import AUDIO_REPORT_FILENAME, INPUT_DIR, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, build_audio_report_data, build_subtitle_detected_name, discover_supported_files, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
+from report import AUDIO_REPORT_FILENAME, INPUT_DIR, PROGRESS_BAR_FORMAT, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, BackgroundColors, build_audio_report_data, build_subtitle_detected_name, discover_supported_files, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
 
 
 @dataclass
@@ -107,6 +108,79 @@ class PlannedSubtitleRename:
     target_name: str  # Store desired target name.
     detected_language: str  # Store detected canonical subtitle language from report.
     detected_type: str  # Store detected canonical subtitle type from report.
+
+
+PROGRESS_ONLY_MESSAGE_PREFIXES = (
+    "Already named ",
+    "No ",
+    "Multiple ",
+    "Default ",
+    "Forced subtitle defaults cleared where Full counterpart exists: ",
+)
+
+
+def message_is_progress_only(message: str) -> bool:
+    """
+    Verify whether a workflow message should stay inside the live progress bar.
+
+    :param message: Workflow message text.
+    :return: True when the message is informational and should not print as a standalone line.
+    """
+
+    return message.startswith(PROGRESS_ONLY_MESSAGE_PREFIXES)  # Keep expected idempotent and unchanged messages inside the bar.
+
+
+def build_rename_progress_status(file_path: Path, operations: list[TrackMetadataEdit], result: MkvpropeditResult | None, new_messages: list[str]) -> str:
+    """
+    Build one concise in-place status for the current file.
+
+    :param file_path: Current media file path.
+    :param operations: Planned operations for the file.
+    :param result: Applied mkvpropedit result when edits were executed.
+    :param new_messages: New workflow messages emitted while processing the file.
+    :return: Short status text for the progress bar.
+    """
+
+    if result is not None and not result.success:  # Highlight edit failure in the live bar.
+        return f"Failed: {file_path.name}"  # Return failure status.
+    if result is not None and result.warning:  # Highlight warning-bearing edits in the live bar.
+        return f"Applied with warning: {file_path.name}"  # Return warning status.
+    if result is not None and result.changed_count > 0:  # Highlight successful edits in the live bar.
+        return f"Applied {result.changed_count} change(s): {file_path.name}"  # Return success status.
+    if any(message.startswith("Already named ") for message in new_messages):  # Highlight idempotent name matches.
+        return f"Already named: {file_path.name}"  # Return idempotent name status.
+    if any(message.startswith("Default subtitles already disabled: ") for message in new_messages):  # Highlight already-cleared subtitle defaults.
+        return f"Default subtitles already disabled: {file_path.name}"  # Return disable-all status.
+    if any(message.startswith("Default ") and "already correct" in message for message in new_messages):  # Highlight already-correct default flags.
+        return f"Default already correct: {file_path.name}"  # Return idempotent default status.
+    if any(message.startswith("No ") and "unchanged." in message for message in new_messages):  # Highlight missing requested default targets.
+        return f"Default flags unchanged: {file_path.name}"  # Return unchanged-default status.
+    if any(message.startswith("Multiple ") and "unchanged." in message for message in new_messages):  # Highlight ambiguous requested default targets.
+        return f"Default target ambiguous: {file_path.name}"  # Return ambiguous-default status.
+    if any(message.startswith("Forced subtitle defaults cleared where Full counterpart exists: ") for message in new_messages):  # Highlight forced-default cleanup.
+        return f"Forced defaults cleared: {file_path.name}"  # Return forced-default status.
+    if not operations:  # Highlight files that needed no edit after validation.
+        return f"No changes needed: {file_path.name}"  # Return no-op status.
+    return f"Validated edits: {file_path.name}"  # Return fallback status.
+
+
+def print_rename_summary(summary: RenameSummary, include_defaults: bool = True) -> None:
+    """
+    Print summary counts plus standalone error and warning lines only.
+
+    :param summary: Workflow summary.
+    :param include_defaults: Whether default counters belong in the summary line.
+    :return: None.
+    """
+
+    if include_defaults:  # Verify default counters belong to this workflow summary.
+        print(f"Summary: planned={summary.planned}, changed={summary.changed}, default_planned={summary.default_planned}, default_changed={summary.default_changed}, default_already={summary.default_already}, default_missing={summary.default_missing}, default_ambiguous={summary.default_ambiguous}, subtitle_default_planned={summary.subtitle_default_planned}, subtitle_default_changed={summary.subtitle_default_changed}, subtitle_default_already={summary.subtitle_default_already}, subtitle_default_missing={summary.subtitle_default_missing}, subtitle_default_ambiguous={summary.subtitle_default_ambiguous}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
+    else:  # Print compact subtitle-only summary.
+        print(f"Summary: planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
+    for message in summary.messages:  # Iterate accumulated messages.
+        if message_is_progress_only(message):  # Skip informational messages already represented by the live progress bar.
+            continue  # Avoid multi-line noise for idempotent cases.
+        print(message)  # Report standalone errors and warnings only.
 
 
 def load_report_data(report_path: Path) -> dict[str, Any] | None:
@@ -837,46 +911,47 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], groupe
     include_subtitle_defaults = default_subtitle.enabled or default_subtitle.disable_all or default_subtitle.disable_forced  # Resolve whether subtitle defaults need all files.
     candidate_files = collect_candidate_files(grouped_plans, grouped_subtitle_plans, input_dir, include_video, selected_file, include_subtitle_defaults)  # Collect selected video, audio, and subtitle candidate files.
     current_supported_files = {path for path in candidate_files if path.exists() and path.suffix.lower() in SUPPORTED_EXTENSIONS}  # Collect current files for video naming eligibility.
-    for file_path in candidate_files:  # Iterate files deterministically.
-        operations: list[TrackMetadataEdit] = []  # Store combined file operations.
-        audio_default_operations: list[TrackMetadataEdit] = []  # Store audio default operations for summary.
-        video_operation = validate_video_plan_for_file(file_path, input_dir, summary) if include_video and file_path in current_supported_files else None  # Validate deterministic video operation.
-        if video_operation is not None:  # Verify video operation exists.
-            operations.append(video_operation)  # Add video operation first.
-        if file_path in grouped_plans:  # Verify report has audio plans for this file.
-            operations.extend(validate_audio_plans_for_file(file_path, grouped_plans[file_path], input_dir, summary))  # Add validated audio operations.
-            audio_default_operations = plan_default_audio_edits(file_path, grouped_plans[file_path], input_dir, summary, default_audio)  # Build validated audio default-flag operations.
-            operations.extend(audio_default_operations)  # Add validated audio default-flag operations.
-        if file_path in grouped_subtitle_plans:  # Verify subtitle report has plans for this file.
-            operations.extend(validate_subtitle_plans_for_file(file_path, grouped_subtitle_plans[file_path], input_dir, summary))  # Add validated subtitle operations.
-        subtitle_default_operations = plan_default_subtitle_edits(file_path, grouped_subtitle_plans.get(file_path, []), input_dir, summary, default_subtitle)  # Build validated subtitle default-flag operations.
-        operations.extend(subtitle_default_operations)  # Add validated subtitle default-flag operations.
-        if not operations:  # Verify file has operations after validation.
-            continue  # Skip files without edits.
-
-        audio_default_change_count = len(audio_default_operations) if file_path in grouped_plans else 0  # Count planned audio default setters for result summary.
-        subtitle_default_change_count = len(subtitle_default_operations)  # Count planned subtitle default setters for result summary.
-        result = apply_track_metadata_edits(file_path, operations)  # Apply mkvpropedit edits.
-        results.append(result)  # Store command result.
-        if result.success and result.warning:  # Verify mkvpropedit completed with warnings.
-            summary.changed += result.changed_count  # Count changes because MKVToolNix continued after warnings.
-            summary.default_changed += audio_default_change_count  # Count audio default-flag changes because MKVToolNix completed with warnings.
-            summary.subtitle_default_changed += subtitle_default_change_count  # Count subtitle default-flag changes because MKVToolNix completed with warnings.
-            summary.warnings += 1  # Count warning-bearing file.
-            warning_text = (result.stderr or result.stdout).strip()  # Resolve warning output text.
-            summary.messages.append(f"mkvpropedit warning for {file_path}: {warning_text}")  # Store warning reason.
-            print(f"Applied {result.changed_count} track metadata change(s) with warning: {file_path}")  # Report warning completion.
-        elif result.success:  # Verify mkvpropedit succeeded cleanly.
-            summary.changed += result.changed_count  # Count successful changes.
-            summary.default_changed += audio_default_change_count  # Count successful audio default-flag changes.
-            summary.subtitle_default_changed += subtitle_default_change_count  # Count successful subtitle default-flag changes.
-            print(f"Applied {result.changed_count} track metadata change(s): {file_path}")  # Report file success.
-        else:  # Handle mkvpropedit failure.
-            summary.failed += result.changed_count  # Count failed changes.
-            summary.messages.append(f"mkvpropedit failed for {file_path}: {result.stderr.strip()}")  # Store failure reason.
-            for plan in grouped_plans.get(file_path, []):  # Iterate failed audio plans for this file.
-                store_unresolved_audio_plan(summary, plan)  # Store mkvpropedit-failed occurrence for manual review.
-            print(f"mkvpropedit failed for {file_path}: {result.stderr.strip()}")  # Report file failure.
+    with tqdm(candidate_files, desc=f"{BackgroundColors.GREEN}Processing rename MKV", unit="file", colour="green", bar_format=PROGRESS_BAR_FORMAT) as progress_bar:  # Build cleanup-managed rename progress bar.
+        for file_path in progress_bar:  # Iterate files deterministically.
+            progress_bar.set_description(f"{BackgroundColors.GREEN}Processing rename: {BackgroundColors.CYAN}{file_path.name}{BackgroundColors.GREEN}")  # Show current MKV filename.
+            message_count_before = len(summary.messages)  # Capture current message count for per-file status updates.
+            operations: list[TrackMetadataEdit] = []  # Store combined file operations.
+            audio_default_operations: list[TrackMetadataEdit] = []  # Store audio default operations for summary.
+            result: MkvpropeditResult | None = None  # Track optional edit result for live status rendering.
+            video_operation = validate_video_plan_for_file(file_path, input_dir, summary) if include_video and file_path in current_supported_files else None  # Validate deterministic video operation.
+            if video_operation is not None:  # Verify video operation exists.
+                operations.append(video_operation)  # Add video operation first.
+            if file_path in grouped_plans:  # Verify report has audio plans for this file.
+                operations.extend(validate_audio_plans_for_file(file_path, grouped_plans[file_path], input_dir, summary))  # Add validated audio operations.
+                audio_default_operations = plan_default_audio_edits(file_path, grouped_plans[file_path], input_dir, summary, default_audio)  # Build validated audio default-flag operations.
+                operations.extend(audio_default_operations)  # Add validated audio default-flag operations.
+            if file_path in grouped_subtitle_plans:  # Verify subtitle report has plans for this file.
+                operations.extend(validate_subtitle_plans_for_file(file_path, grouped_subtitle_plans[file_path], input_dir, summary))  # Add validated subtitle operations.
+            subtitle_default_operations = plan_default_subtitle_edits(file_path, grouped_subtitle_plans.get(file_path, []), input_dir, summary, default_subtitle)  # Build validated subtitle default-flag operations.
+            operations.extend(subtitle_default_operations)  # Add validated subtitle default-flag operations.
+            if operations:  # Verify file has edits after validation.
+                audio_default_change_count = len(audio_default_operations) if file_path in grouped_plans else 0  # Count planned audio default setters for result summary.
+                subtitle_default_change_count = len(subtitle_default_operations)  # Count planned subtitle default setters for result summary.
+                result = apply_track_metadata_edits(file_path, operations)  # Apply mkvpropedit edits.
+                results.append(result)  # Store command result.
+                if result.success and result.warning:  # Verify mkvpropedit completed with warnings.
+                    summary.changed += result.changed_count  # Count changes because MKVToolNix continued after warnings.
+                    summary.default_changed += audio_default_change_count  # Count audio default-flag changes because MKVToolNix completed with warnings.
+                    summary.subtitle_default_changed += subtitle_default_change_count  # Count subtitle default-flag changes because MKVToolNix completed with warnings.
+                    summary.warnings += 1  # Count warning-bearing file.
+                    warning_text = (result.stderr or result.stdout).strip()  # Resolve warning output text.
+                    summary.messages.append(f"mkvpropedit warning for {file_path}: {warning_text}")  # Store warning reason.
+                elif result.success:  # Verify mkvpropedit succeeded cleanly.
+                    summary.changed += result.changed_count  # Count successful changes.
+                    summary.default_changed += audio_default_change_count  # Count successful audio default-flag changes.
+                    summary.subtitle_default_changed += subtitle_default_change_count  # Count successful subtitle default-flag changes.
+                else:  # Handle mkvpropedit failure.
+                    summary.failed += result.changed_count  # Count failed changes.
+                    summary.messages.append(f"mkvpropedit failed for {file_path}: {result.stderr.strip()}")  # Store failure reason.
+                    for plan in grouped_plans.get(file_path, []):  # Iterate failed audio plans for this file.
+                        store_unresolved_audio_plan(summary, plan)  # Store mkvpropedit-failed occurrence for manual review.
+            new_messages = summary.messages[message_count_before:]  # Read messages emitted while processing this file.
+            progress_bar.set_description(f"{BackgroundColors.GREEN}{build_rename_progress_status(file_path, operations, result, new_messages)}{BackgroundColors.GREEN}")  # Render concise live status for the current file.
 
     return results  # Return command results.
 
@@ -1038,9 +1113,7 @@ def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bo
     grouped_plans, grouped_subtitle_plans = collect_detected_plans(root_path, summary, include_audio, include_subtitles, selected_file)  # Collect automatic detected plans.
     apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file, default_audio, default_subtitle)  # Apply validated rename operations.
 
-    print(f"Summary: planned={summary.planned}, changed={summary.changed}, default_planned={summary.default_planned}, default_changed={summary.default_changed}, default_already={summary.default_already}, default_missing={summary.default_missing}, default_ambiguous={summary.default_ambiguous}, subtitle_default_planned={summary.subtitle_default_planned}, subtitle_default_changed={summary.subtitle_default_changed}, subtitle_default_already={summary.subtitle_default_already}, subtitle_default_missing={summary.subtitle_default_missing}, subtitle_default_ambiguous={summary.subtitle_default_ambiguous}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
-    for message in summary.messages:  # Iterate accumulated messages.
-        print(message)  # Report detailed message.
+    print_rename_summary(summary)  # Report summary counts plus standalone errors and warnings.
 
     return summary  # Return workflow summary.
 
@@ -1089,9 +1162,7 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | 
     if include_audio:  # Verify audio workflow was selected.
         write_unresolved_audio_report(summary, resolved_unresolved_audio_report_path)  # Write editable unresolved audio report.
 
-    print(f"Summary: planned={summary.planned}, changed={summary.changed}, default_planned={summary.default_planned}, default_changed={summary.default_changed}, default_already={summary.default_already}, default_missing={summary.default_missing}, default_ambiguous={summary.default_ambiguous}, subtitle_default_planned={summary.subtitle_default_planned}, subtitle_default_changed={summary.subtitle_default_changed}, subtitle_default_already={summary.subtitle_default_already}, subtitle_default_missing={summary.subtitle_default_missing}, subtitle_default_ambiguous={summary.subtitle_default_ambiguous}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
-    for message in summary.messages:  # Iterate accumulated messages.
-        print(message)  # Report detailed message.
+    print_rename_summary(summary)  # Report summary counts plus standalone errors and warnings.
 
     return summary  # Return workflow summary.
 
@@ -1371,9 +1442,7 @@ def rename_subtitle_tracks(input_dir: str = INPUT_DIR, subtitle_report_path: Pat
     grouped_plans = group_subtitle_plans_by_file(planned_renames)  # Group subtitle plans by media file.
     apply_grouped_renames({}, grouped_plans, root_path, summary, False)  # Apply subtitle-only rename operations.
 
-    print(f"Summary: planned={summary.planned}, changed={summary.changed}, warnings={summary.warnings}, skipped={summary.skipped}, failed={summary.failed}")  # Report summary counts.
-    for message in summary.messages:  # Iterate accumulated messages.
-        print(message)  # Report detailed message.
+    print_rename_summary(summary, include_defaults=False)  # Report summary counts plus standalone errors and warnings.
 
     return summary  # Return workflow summary.
 
