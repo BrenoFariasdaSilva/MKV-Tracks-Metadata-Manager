@@ -25,8 +25,7 @@ from utils.utils import calculate_execution_time, BackgroundColors  # Track and 
 
 # Constants:
 
-CLEAR_TERMINAL = "\033[0m"  # Reset terminal colors after progress output.
-PROGRESS_BAR_FORMAT = f"{BackgroundColors.GREEN}{{l_bar}}{{bar}}{{r_bar}}{CLEAR_TERMINAL}"  # Render full progress bar in green.
+PROGRESS_BAR_FORMAT = f"{BackgroundColors.GREEN}{{l_bar}}{{bar}}{{r_bar}}{BackgroundColors.RESET_ALL}"  # Render full progress bar in green.
 INPUT_DIR = "E:/Movies/"  # Store default recursive input directory.
 REPORTS_DIR = Path(__file__).with_name("Reports")  # Store report output directory beside this script.
 AUDIO_REPORT_FILENAME = "audio_report.json"  # Store default audio report filename.
@@ -53,7 +52,7 @@ def format_colored_status(label: str, detail: object, color: str = BackgroundCol
     :return: Colorized status line.
     """
 
-    return f"{color}{label}: {BackgroundColors.CYAN}{detail}{CLEAR_TERMINAL}"  # Render the fixed message in severity color and the dynamic detail in cyan.
+    return f"{color}{label}: {BackgroundColors.CYAN}{detail}{BackgroundColors.RESET_ALL}"  # Render the fixed message in severity color and the dynamic detail in cyan.
 
 
 def build_report_prefix(input_dir: str) -> str:
@@ -449,14 +448,14 @@ def resolve_selected_file(input_dir: Path, selected_file: str | None) -> Path | 
         resolved_media_path = media_path.resolve(strict=False)  # Resolve final selected path.
         resolved_media_path.relative_to(root_path)  # Verify selected path remains under input directory.
     except (OSError, ValueError):  # Handle invalid or escaping selected paths.
-        print(f"{BackgroundColors.RED}Selected file is outside input directory or invalid{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{selected_file}{CLEAR_TERMINAL}")  # Report invalid selection.
+        print(f"{BackgroundColors.RED}Selected file is outside input directory or invalid{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{selected_file}{BackgroundColors.RESET_ALL}")  # Report invalid selection.
         return None  # Return no selected file.
 
     if not resolved_media_path.exists() or not resolved_media_path.is_file():  # Verify selected file exists.
-        print(f"{BackgroundColors.RED}Selected file not found{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{resolved_media_path}{CLEAR_TERMINAL}")  # Report missing selected file.
+        print(f"{BackgroundColors.RED}Selected file not found{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{resolved_media_path}{BackgroundColors.RESET_ALL}")  # Report missing selected file.
         return None  # Return no selected file.
     if resolved_media_path.suffix.lower() not in SUPPORTED_EXTENSIONS:  # Verify selected file is supported Matroska.
-        print(f"{BackgroundColors.RED}Selected file is not a supported Matroska file{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{resolved_media_path}{CLEAR_TERMINAL}")  # Report unsupported selected file.
+        print(f"{BackgroundColors.RED}Selected file is not a supported Matroska file{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{resolved_media_path}{BackgroundColors.RESET_ALL}")  # Report unsupported selected file.
         return None  # Return no selected file.
 
     return resolved_media_path  # Return exact selected file path.
@@ -515,24 +514,24 @@ def probe_media(file_path: Path) -> dict[str, Any]:
 
     file_issue = read_media_file_issue(file_path)  # Validate obvious filesystem issues before ffprobe.
     if file_issue != "":  # Verify media file can be probed safely.
-        print(f"{BackgroundColors.RED}Skipping{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {file_issue}{CLEAR_TERMINAL}")  # Report early invalid file.
+        print(f"{BackgroundColors.RED}Skipping{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {file_issue}{BackgroundColors.RESET_ALL}")  # Report early invalid file.
         return {"streams": [], "format": {}}  # Return empty metadata.
     executable = find_executable("ffprobe") or "ffprobe"  # Locate ffprobe executable.
     command = [executable, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(file_path)]  # Build ffprobe command.
     try:  # Execute ffprobe safely.
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)  # Run ffprobe.
     except OSError as error:  # Handle unavailable ffprobe or execution failure.
-        print(f"{BackgroundColors.RED}ffprobe unavailable for{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {error}{CLEAR_TERMINAL}")  # Report inspection failure.
+        print(f"{BackgroundColors.RED}ffprobe unavailable for{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {error}{BackgroundColors.RESET_ALL}")  # Report inspection failure.
         return {"streams": [], "format": {}}  # Return empty metadata.
 
     if result.returncode != 0:  # Verify ffprobe succeeded.
-        print(f"{BackgroundColors.RED}ffprobe failed for{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {result.stderr.strip()}{CLEAR_TERMINAL}")  # Report ffprobe error.
+        print(f"{BackgroundColors.RED}ffprobe failed for{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {result.stderr.strip()}{BackgroundColors.RESET_ALL}")  # Report ffprobe error.
         return {"streams": [], "format": {}}  # Return empty metadata.
 
     try:  # Parse ffprobe JSON output.
         parsed_data = json.loads(result.stdout) if result.stdout else {"streams": [], "format": {}}  # Decode JSON metadata.
     except json.JSONDecodeError as error:  # Handle invalid ffprobe JSON.
-        print(f"{BackgroundColors.RED}ffprobe returned invalid JSON for{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {error}{CLEAR_TERMINAL}")  # Report parse failure.
+        print(f"{BackgroundColors.RED}ffprobe returned invalid JSON for{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {error}{BackgroundColors.RESET_ALL}")  # Report parse failure.
         return {"streams": [], "format": {}}  # Return empty metadata.
 
     return parsed_data if isinstance(parsed_data, dict) else {"streams": [], "format": {}}  # Return object metadata.
@@ -551,23 +550,23 @@ def probe_mkvmerge(file_path: Path) -> dict[str, Any]:
         return {"tracks": []}  # Return empty metadata after early report from ffprobe path or caller.
     executable = find_executable("mkvmerge")  # Locate mkvmerge executable.
     if executable is None:  # Verify mkvmerge is available.
-        print(f"{BackgroundColors.RED}mkvmerge unavailable for{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: executable not found{CLEAR_TERMINAL}")  # Report missing mkvmerge.
+        print(f"{BackgroundColors.RED}mkvmerge unavailable for{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: executable not found{BackgroundColors.RESET_ALL}")  # Report missing mkvmerge.
         return {"tracks": []}  # Return empty metadata.
     command = [executable, "-J", str(file_path)]  # Build mkvmerge JSON command.
     try:  # Execute mkvmerge safely.
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)  # Run mkvmerge.
     except OSError as error:  # Handle unavailable mkvmerge or execution failure.
-        print(f"{BackgroundColors.RED}mkvmerge unavailable for{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {error}{CLEAR_TERMINAL}")  # Report inspection failure.
+        print(f"{BackgroundColors.RED}mkvmerge unavailable for{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {error}{BackgroundColors.RESET_ALL}")  # Report inspection failure.
         return {"tracks": []}  # Return empty metadata.
 
     if result.returncode != 0:  # Verify mkvmerge inspection succeeded.
-        print(f"{BackgroundColors.RED}mkvmerge failed for{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {result.stderr.strip()}{CLEAR_TERMINAL}")  # Report mkvmerge error.
+        print(f"{BackgroundColors.RED}mkvmerge failed for{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {result.stderr.strip()}{BackgroundColors.RESET_ALL}")  # Report mkvmerge error.
         return {"tracks": []}  # Return empty metadata.
 
     try:  # Parse mkvmerge JSON output.
         parsed_data = json.loads(result.stdout) if result.stdout else {"tracks": []}  # Decode JSON metadata.
     except json.JSONDecodeError as error:  # Handle invalid mkvmerge JSON.
-        print(f"{BackgroundColors.RED}mkvmerge returned invalid JSON for{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {error}{CLEAR_TERMINAL}")  # Report parse failure.
+        print(f"{BackgroundColors.RED}mkvmerge returned invalid JSON for{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {error}{BackgroundColors.RESET_ALL}")  # Report parse failure.
         return {"tracks": []}  # Return empty metadata.
 
     return parsed_data if isinstance(parsed_data, dict) else {"tracks": []}  # Return object metadata.
@@ -785,13 +784,13 @@ def read_audio_tracks(file_path: Path, input_dir: Path, detect_language: bool) -
 
     file_issue = read_media_file_issue(file_path)  # Validate obvious filesystem issues before deeper track work.
     if file_issue != "":  # Verify media file can be inspected safely.
-        print(f"{BackgroundColors.RED}Skipping{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {file_issue}{CLEAR_TERMINAL}")  # Report early invalid file.
+        print(f"{BackgroundColors.RED}Skipping{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {file_issue}{BackgroundColors.RESET_ALL}")  # Report early invalid file.
         return []  # Return no audio tracks for invalid media.
     ffprobe_data = probe_media(file_path)  # Read duration metadata from ffprobe.
     mkvmerge_data = probe_mkvmerge(file_path)  # Read track order metadata from MKVToolNix.
     mkvmerge_audio_tracks = read_mkvmerge_audio_tracks(mkvmerge_data)  # Read audio tracks in mkvpropedit selector order.
     if not ffprobe_data.get("streams") and not mkvmerge_audio_tracks:  # Verify the file produced usable container metadata.
-        print(f"{BackgroundColors.RED}Skipping corrupt or unreadable Matroska file before audio detection{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}{CLEAR_TERMINAL}")  # Report early corruption skip.
+        print(f"{BackgroundColors.RED}Skipping corrupt or unreadable Matroska file before audio detection{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}{BackgroundColors.RESET_ALL}")  # Report early corruption skip.
         return []  # Return no audio tracks for corrupt media.
     format_duration = read_format_duration(ffprobe_data)  # Read format duration.
     audio_tracks: list[AudioTrackRecord] = []  # Store audio records.
@@ -822,12 +821,12 @@ def read_video_tracks(file_path: Path, input_dir: Path) -> list[VideoTrackRecord
 
     file_issue = read_media_file_issue(file_path)  # Validate obvious filesystem issues before video inspection.
     if file_issue != "":  # Verify media file can be inspected safely.
-        print(f"{BackgroundColors.RED}Skipping{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {file_issue}{CLEAR_TERMINAL}")  # Report early invalid file.
+        print(f"{BackgroundColors.RED}Skipping{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {file_issue}{BackgroundColors.RESET_ALL}")  # Report early invalid file.
         return []  # Return no video tracks for invalid media.
     mkvmerge_data = probe_mkvmerge(file_path)  # Read track order metadata from MKVToolNix.
     mkvmerge_video_tracks = read_mkvmerge_video_tracks(mkvmerge_data)  # Read video tracks in mkvpropedit selector order.
     if not mkvmerge_video_tracks:  # Verify the file produced usable Matroska track metadata.
-        print(f"{BackgroundColors.RED}Skipping corrupt or unreadable Matroska file before video rename planning{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}{CLEAR_TERMINAL}")  # Report early corruption skip.
+        print(f"{BackgroundColors.RED}Skipping corrupt or unreadable Matroska file before video rename planning{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}{BackgroundColors.RESET_ALL}")  # Report early corruption skip.
         return []  # Return no video tracks for corrupt media.
     video_tracks: list[VideoTrackRecord] = []  # Store video records.
 
@@ -853,13 +852,13 @@ def read_subtitle_tracks(file_path: Path, input_dir: Path, detect_language: bool
 
     file_issue = read_media_file_issue(file_path)  # Validate obvious filesystem issues before deeper track work.
     if file_issue != "":  # Verify media file can be inspected safely.
-        print(f"{BackgroundColors.RED}Skipping{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {file_issue}{CLEAR_TERMINAL}")  # Report early invalid file.
+        print(f"{BackgroundColors.RED}Skipping{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {file_issue}{BackgroundColors.RESET_ALL}")  # Report early invalid file.
         return []  # Return no subtitle tracks for invalid media.
     ffprobe_data = probe_media(file_path)  # Read duration metadata from ffprobe.
     mkvmerge_data = probe_mkvmerge(file_path)  # Read track order metadata from MKVToolNix.
     mkvmerge_subtitle_tracks = read_mkvmerge_subtitle_tracks(mkvmerge_data)  # Read subtitle tracks in mkvpropedit selector order.
     if not ffprobe_data.get("streams") and not mkvmerge_subtitle_tracks:  # Verify the file produced usable container metadata.
-        print(f"{BackgroundColors.RED}Skipping corrupt or unreadable Matroska file before subtitle detection{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}{CLEAR_TERMINAL}")  # Report early corruption skip.
+        print(f"{BackgroundColors.RED}Skipping corrupt or unreadable Matroska file before subtitle detection{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}{BackgroundColors.RESET_ALL}")  # Report early corruption skip.
         return []  # Return no subtitle tracks for corrupt media.
     format_duration = read_format_duration(ffprobe_data)  # Read format duration.
     subtitle_tracks: list[SubtitleTrackRecord] = []  # Store subtitle records.
@@ -898,7 +897,7 @@ def collect_audio_tracks(input_dir: Path, selected_file: str | None = None) -> l
             try:  # Inspect one file without stopping the full report.
                 tracks.extend(read_audio_tracks(file_path, input_dir, True))  # Add audio records with language detection.
             except Exception as error:  # Handle unexpected per-file failures.
-                print(f"{BackgroundColors.RED}Skipping{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {error}{CLEAR_TERMINAL}")  # Report skipped corrupt or unreadable file.
+                print(f"{BackgroundColors.RED}Skipping{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {error}{BackgroundColors.RESET_ALL}")  # Report skipped corrupt or unreadable file.
 
     return tracks  # Return collected track records.
 
@@ -920,7 +919,7 @@ def collect_subtitle_tracks(input_dir: Path, selected_file: str | None = None) -
             try:  # Inspect one file without stopping the full report.
                 tracks.extend(read_subtitle_tracks(file_path, input_dir, True))  # Add subtitle records with language detection.
             except Exception as error:  # Handle unexpected per-file failures.
-                print(f"{BackgroundColors.RED}Skipping subtitle scan for{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{file_path}: {error}{CLEAR_TERMINAL}")  # Report skipped corrupt or unreadable file.
+                print(f"{BackgroundColors.RED}Skipping subtitle scan for{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{file_path}: {error}{BackgroundColors.RESET_ALL}")  # Report skipped corrupt or unreadable file.
 
     return tracks  # Return collected track records.
 
@@ -1059,7 +1058,7 @@ def generate_audio_report(input_dir: str = INPUT_DIR, report_path: str | Path | 
 
     root_path = Path(input_dir).resolve(strict=False)  # Resolve configured input directory path.
     if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
-        print(f"{BackgroundColors.RED}Input directory not found{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{root_path}{CLEAR_TERMINAL}")  # Report missing input directory.
+        print(f"{BackgroundColors.RED}Input directory not found{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{root_path}{BackgroundColors.RESET_ALL}")  # Report missing input directory.
         return {}  # Return empty report data without writing stale content.
 
     output_path = resolve_report_path(input_dir, report_path, AUDIO_REPORT_FILENAME)  # Resolve default or explicit report path.
@@ -1085,7 +1084,7 @@ def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: str | Path
 
     root_path = Path(input_dir).resolve(strict=False)  # Resolve configured input directory path.
     if not root_path.exists() or not root_path.is_dir():  # Verify input directory exists.
-        print(f"{BackgroundColors.RED}Input directory not found{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{root_path}{CLEAR_TERMINAL}")  # Report missing input directory.
+        print(f"{BackgroundColors.RED}Input directory not found{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{root_path}{BackgroundColors.RESET_ALL}")  # Report missing input directory.
         return {}  # Return empty report data without writing stale content.
 
     output_path = resolve_report_path(input_dir, report_path, SUBTITLE_REPORT_FILENAME)  # Resolve default or explicit subtitle report path.
@@ -1132,7 +1131,7 @@ def run_report_cli(arguments: list[str] | None = None) -> int:
 
     input_path = Path(parsed_args.input_dir).resolve(strict=False)  # Resolve input directory argument.
     if not input_path.exists() or not input_path.is_dir():  # Verify input directory exists before reporting.
-        print(f"{BackgroundColors.RED}Input directory not found{CLEAR_TERMINAL}: {BackgroundColors.CYAN}{input_path}{CLEAR_TERMINAL}")  # Report missing input directory.
+        print(f"{BackgroundColors.RED}Input directory not found{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{input_path}{BackgroundColors.RESET_ALL}")  # Report missing input directory.
         return 1  # Return failure status.
 
     if parsed_args.video:  # Verify video selection was provided.
