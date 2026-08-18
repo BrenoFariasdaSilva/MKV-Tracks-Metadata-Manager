@@ -5,6 +5,7 @@ Rename Matroska video, audio, and embedded subtitle track name metadata safely.
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
 
 import argparse  # Parse command-line arguments.
+import datetime  # Track execution start and finish times.
 from dataclasses import dataclass, field  # Define typed workflow records.
 from pathlib import Path  # Represent filesystem paths.
 from typing import Any  # Type dynamic JSON data.
@@ -16,6 +17,7 @@ from audio_language_detector import normalize_language_value  # Reuse canonical 
 from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, apply_track_metadata_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
 from report import AUDIO_REPORT_FILENAME, INPUT_DIR, PROGRESS_BAR_FORMAT, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, CLEAR_TERMINAL, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, BackgroundColors, build_audio_report_data, build_subtitle_detected_name, discover_supported_files, format_colored_status, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
+from utils.utils import calculate_execution_time, Style  # Track and display execution time.
 
 
 @dataclass
@@ -1497,7 +1499,27 @@ def main() -> None:
     logger = Logger(str(Path(__file__).with_name("Logs") / f"{Path(__file__).stem}.log"), clean=True)  # Create project-local log mirror.
     sys.stdout = logger  # Mirror standard output to terminal and log file.
     sys.stderr = logger  # Mirror standard error to terminal and log file.
-    sys.exit(run_rename_cli())  # Run CLI and return process status.
+    
+    print(
+        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Welcome to the {BackgroundColors.CYAN}Track Metadata Renamer{BackgroundColors.GREEN} program!{Style.RESET_ALL}",
+        end="\n\n",
+    )  # Output the welcome message
+    
+    start_time = datetime.datetime.now()  # Get the start time of the program
+    
+    status = run_rename_cli()  # Run CLI and capture process status
+    
+    finish_time = datetime.datetime.now()  # Get the finish time of the program
+    
+    print(
+        f"{BackgroundColors.GREEN}Start time: {BackgroundColors.CYAN}{start_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Finish time: {BackgroundColors.CYAN}{finish_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Execution time: {BackgroundColors.CYAN}{calculate_execution_time(start_time, finish_time)}{Style.RESET_ALL}"
+    )  # Output the start and finish times
+    
+    print(
+        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Program finished.{Style.RESET_ALL}"
+    )  # Output the end of the program message
+    
+    sys.exit(status)  # Run CLI and return process status.
 
 
 if __name__ == "__main__":  # Run script entry point when executed directly.
