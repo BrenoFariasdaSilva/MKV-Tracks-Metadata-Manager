@@ -5,6 +5,7 @@ Generate editable track-name rename reports for Matroska video files.
 from __future__ import annotations  # Enable modern annotations on older supported Python versions.
 
 import argparse  # Parse command-line arguments.
+import datetime  # Track execution start and finish times.
 from dataclasses import dataclass, replace  # Define compact typed records.
 import json  # Read and write report JSON.
 import os  # Replace completed report files atomically.
@@ -20,18 +21,9 @@ from audio_language_detector import detect_audio_track_language, normalize_langu
 from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
 from subtitle_language_detector import detect_subtitle_track_language  # Resolve metadata or text subtitle language.
+from utils.utils import calculate_execution_time, BackgroundColors, Style  # Track and display execution time.
 
-
-# Macros:
-class BackgroundColors:  # Colors for the terminal
-    CYAN = "\033[96m"  # Cyan
-    GREEN = "\033[92m"  # Green
-    YELLOW = "\033[93m"  # Yellow
-    RED = "\033[91m"  # Red
-    BOLD = "\033[1m"  # Bold
-    UNDERLINE = "\033[4m"  # Underline
-    CLEAR_TERMINAL = "\033[H\033[J"  # Clear the terminal
-
+# Constants:
 
 CLEAR_TERMINAL = "\033[0m"  # Reset terminal colors after progress output.
 PROGRESS_BAR_FORMAT = f"{BackgroundColors.GREEN}{{l_bar}}{{bar}}{{r_bar}}{CLEAR_TERMINAL}"  # Render full progress bar in green.
@@ -49,6 +41,7 @@ OCCURRENCE_SUFFIX_PATTERN = re.compile(r"^(?P<path>.+) \[audio:(?P<audio>\d+)(?:
 SUBTITLE_OCCURRENCE_SUFFIX_PATTERN = re.compile(r"^(?P<path>.+) \[subtitle:(?P<subtitle>\d+)(?: track-id:(?P<track_id>[^\s\]]+))?(?: uid:(?P<uid>[^\]]+))?\]$")  # Parse subtitle occurrence keys.
 GROUP_KEY_PATTERN = re.compile(r"^(?P<name>.*) \((?P<count>\d+)\)$")  # Parse grouped current-name keys.
 
+# Functions:
 
 def format_colored_status(label: str, detail: object, color: str = BackgroundColors.GREEN) -> str:
     """
@@ -1162,7 +1155,27 @@ def main() -> None:
     logger = Logger(str(Path(__file__).with_name("Logs") / f"{Path(__file__).stem}.log"), clean=True)  # Create project-local log mirror.
     sys.stdout = logger  # Mirror standard output to terminal and log file.
     sys.stderr = logger  # Mirror standard error to terminal and log file.
-    sys.exit(run_report_cli())  # Run CLI and return process status.
+    
+    print(
+        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Welcome to the {BackgroundColors.CYAN}Report Generator{BackgroundColors.GREEN} program!{Style.RESET_ALL}",
+        end="\n\n",
+    )  # Output the welcome message
+    
+    start_time = datetime.datetime.now()  # Get the start time of the program
+    
+    status = run_report_cli()  # Run CLI and capture process status
+    
+    finish_time = datetime.datetime.now()  # Get the finish time of the program
+    
+    print(
+        f"{BackgroundColors.GREEN}Start time: {BackgroundColors.CYAN}{start_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Finish time: {BackgroundColors.CYAN}{finish_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Execution time: {BackgroundColors.CYAN}{calculate_execution_time(start_time, finish_time)}{Style.RESET_ALL}"
+    )  # Output the start and finish times
+    
+    print(
+        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Program finished.{Style.RESET_ALL}"
+    )  # Output the end of the program message
+    
+    sys.exit(status)  # Run CLI and return process status.
 
 
 if __name__ == "__main__":  # Run script entry point when executed directly.
