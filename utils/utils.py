@@ -15,10 +15,6 @@ class BackgroundColors:  # Colors for the terminal
     RED = "\033[91m"  # Red
     BOLD = "\033[1m"  # Bold
     UNDERLINE = "\033[4m"  # Underline
-    CLEAR_TERMINAL = "\033[H\033[J"  # Clear the terminal
-
-
-class Style:  # Style formatting for the terminal
     RESET_ALL = "\033[0m"  # Reset all formatting
 
 
