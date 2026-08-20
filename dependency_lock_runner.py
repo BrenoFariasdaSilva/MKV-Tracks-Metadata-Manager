@@ -10,9 +10,9 @@ Description :
     environment at the same time.
 
     Key features include:
-        - Atomic cross-process lock creation with standard library only
+        - Atomic cross-process locking with standard library only
         - Optional skip path for virtual environment creation
-        - Stale lock cleanup for abandoned setup processes
+        - Crash-safe release through operating-system handle cleanup
         - Direct subprocess execution without shell interpolation
 
 Usage:
@@ -38,17 +38,16 @@ Assumptions & Notes:
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
 
-import os  # Create lock files atomically and read process id.
+import os  # Read process id for diagnostic lock ownership.
 from pathlib import Path  # Represent lock and skip paths.
 import subprocess  # Run wrapped setup commands without shell interpolation.
 import sys  # Read CLI arguments and return wrapped status.
-import time  # Wait briefly while another setup process owns the lock.
+
+from file_lock import FileLock, acquire_file_lock, release_file_lock  # Reuse handle-owned cross-process locks.
 
 
 LOCK_DIR = Path(__file__).with_name(".make_locks")  # Store repository-local Makefile lock files.
 DEPENDENCY_LOCK_NAME = "dependencies.lock"  # Store the shared dependency lock filename.
-DEPENDENCY_LOCK_RETRY_SECONDS = 0.25  # Wait interval between dependency lock attempts.
-DEPENDENCY_LOCK_STALE_SECONDS = 3600.0  # Allow cleanup of abandoned dependency locks after one hour.
 
 
 def build_dependency_lock_path() -> Path:
@@ -61,60 +60,27 @@ def build_dependency_lock_path() -> Path:
     return LOCK_DIR / DEPENDENCY_LOCK_NAME  # Return the single dependency setup lock path.
 
 
-def remove_stale_dependency_lock(lock_path: Path) -> None:
-    """
-    Remove an abandoned dependency lock when it is old enough.
-
-    :param lock_path: Dependency lock file path.
-    :return: None.
-    """
-
-    try:  # Read lock file age.
-        lock_age = time.time() - lock_path.stat().st_mtime  # Calculate lock age in seconds.
-    except OSError:  # Handle lock disappearing between attempts.
-        return  # Return when no stale lock can be removed.
-    if lock_age <= DEPENDENCY_LOCK_STALE_SECONDS:  # Verify lock is not stale enough.
-        return  # Keep active or recently abandoned lock.
-    try:  # Remove stale lock.
-        lock_path.unlink()  # Delete abandoned dependency lock.
-    except OSError:  # Handle concurrent lock removal.
-        return  # Return after harmless race.
-
-
-def acquire_dependency_lock() -> Path:
+def acquire_dependency_lock() -> FileLock:
     """
     Acquire the shared dependency setup lock.
 
-    :return: Acquired dependency lock path.
+    :return: Acquired dependency lock handle.
     """
 
-    LOCK_DIR.mkdir(parents=True, exist_ok=True)  # Ensure lock directory exists.
     lock_path = build_dependency_lock_path()  # Build dependency lock path.
     lock_payload = f"pid={os.getpid()}\n"  # Build diagnostic lock payload.
-    while True:  # Wait until this process owns the dependency lock.
-        try:  # Attempt atomic lock creation.
-            lock_descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)  # Create lock file atomically.
-        except FileExistsError:  # Handle another setup process.
-            remove_stale_dependency_lock(lock_path)  # Remove abandoned lock only when old enough.
-            time.sleep(DEPENDENCY_LOCK_RETRY_SECONDS)  # Wait before retrying dependency setup.
-            continue  # Retry lock acquisition.
-        with os.fdopen(lock_descriptor, "w", encoding="utf-8") as lock_file:  # Open acquired lock descriptor.
-            lock_file.write(lock_payload)  # Write diagnostic owner data.
-        return lock_path  # Return acquired lock path.
+    return acquire_file_lock(lock_path, lock_payload)  # Return handle-owned dependency lock.
 
 
-def release_dependency_lock(lock_path: Path) -> None:
+def release_dependency_lock(file_lock: FileLock) -> None:
     """
     Release the shared dependency setup lock.
 
-    :param lock_path: Dependency lock file path.
+    :param file_lock: Acquired dependency lock handle.
     :return: None.
     """
 
-    try:  # Remove owned lock file.
-        lock_path.unlink()  # Release dependency lock.
-    except OSError:  # Handle already removed lock.
-        return  # Ignore release race.
+    release_file_lock(file_lock)  # Release handle-owned dependency lock.
 
 
 def parse_locked_command(arguments: list[str]) -> tuple[Path | None, list[str]]:
@@ -147,14 +113,14 @@ def run_locked_command(skip_path: Path | None, command: list[str]) -> int:
     if not command:  # Verify a wrapped command was provided.
         print("No dependency command provided.")  # Report invalid invocation.
         return 2  # Return usage failure.
-    lock_path = acquire_dependency_lock()  # Acquire shared dependency lock.
+    lock_handle = acquire_dependency_lock()  # Acquire shared dependency lock.
     try:  # Run command while setup lock is held.
         if skip_path is not None and skip_path.exists():  # Verify another process already created the requested path.
             return 0  # Return success without repeating setup.
         result = subprocess.run(command, check=False)  # Run wrapped command without shell interpolation.
         return int(result.returncode)  # Return wrapped command status.
     finally:  # Ensure dependency lock release.
-        release_dependency_lock(lock_path)  # Release shared dependency lock.
+        release_dependency_lock(lock_handle)  # Release shared dependency lock.
 
 
 def main() -> None:

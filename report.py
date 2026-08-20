@@ -130,7 +130,8 @@ def normalize_run_id(run_id: str | None) -> str:
 
     if run_id is None or str(run_id).strip() == "":  # Verify caller supplied a useful run identifier.
         return ""  # Return empty text when no run identifier is active.
-    safe_run_id = INVALID_REPORT_FILENAME_PATTERN.sub("-", str(run_id).strip()).strip(" .-")  # Replace reserved filename characters.
+    separatorless_run_id = str(run_id).strip().replace("/", "-").replace("\\", "-")  # Replace path separators before filename normalization.
+    safe_run_id = INVALID_REPORT_FILENAME_PATTERN.sub("-", separatorless_run_id).strip(" .-")  # Replace reserved filename characters.
     return safe_run_id  # Return sanitized run identifier.
 
 

@@ -248,7 +248,7 @@ def classify_message_color(message: str) -> str:
     :return: ANSI color escape sequence.
     """
 
-    normalized_message = message.casefold()  # Normalize text for stable severity checks.
+    normalized_message = message.casefold()  # Normalize text for stable severity detection.
     if "warning" in normalized_message or "group count mismatch" in normalized_message or "skipped malformed" in normalized_message:  # Detect warning-like messages.
         return BackgroundColors.YELLOW  # Render warnings in yellow.
     if "failed" in normalized_message or "mismatch" in normalized_message or "missing" in normalized_message or "not found" in normalized_message or "unsupported" in normalized_message:  # Detect error-like messages.
@@ -1013,7 +1013,7 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], groupe
             operations: list[TrackMetadataEdit] = []  # Store combined file operations.
             audio_default_operations: list[TrackMetadataEdit] = []  # Store audio default operations for summary.
             result: MkvpropeditResult | None = None  # Track optional edit result for live status rendering.
-            file_lock_path = acquire_media_edit_lock(file_path) if file_path in current_supported_files else None  # Acquire per-media lock before validation and edit.
+            file_lock_handle = acquire_media_edit_lock(file_path) if file_path in current_supported_files else None  # Acquire per-media lock before validation and edit.
             try:  # Validate and edit while holding the media lock when applicable.
                 video_operation = validate_video_plan_for_file(file_path, input_dir, summary) if include_video and file_path in current_supported_files else None  # Validate deterministic video operation.
                 if video_operation is not None:  # Verify video operation exists.
@@ -1029,7 +1029,7 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], groupe
                 if operations:  # Verify file has edits after validation.
                     audio_default_change_count = len(audio_default_operations) if file_path in grouped_plans else 0  # Count planned audio default setters for result summary.
                     subtitle_default_change_count = len(subtitle_default_operations)  # Count planned subtitle default setters for result summary.
-                    result = apply_track_metadata_edits(file_path, operations, file_lock_path is not None)  # Apply mkvpropedit edits.
+                    result = apply_track_metadata_edits(file_path, operations, file_lock_handle is not None)  # Apply mkvpropedit edits.
                     results.append(result)  # Store command result.
                     if result.success and result.warning:  # Verify mkvpropedit completed with warnings.
                         summary.changed += result.changed_count  # Count changes because MKVToolNix continued after warnings.
@@ -1048,7 +1048,7 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], groupe
                         for plan in grouped_plans.get(file_path, []):  # Iterate failed audio plans for this file.
                             store_unresolved_audio_plan(summary, plan)  # Store mkvpropedit-failed occurrence for manual review.
             finally:  # Ensure media lock release after validation and edit.
-                release_media_edit_lock(file_lock_path) if file_lock_path is not None else None  # Release per-media lock when acquired.
+                release_media_edit_lock(file_lock_handle) if file_lock_handle is not None else None  # Release per-media lock when acquired.
             new_messages = summary.messages[message_count_before:]  # Read messages emitted while processing this file.
             progress_bar.set_description(f"{BackgroundColors.GREEN}{build_rename_progress_status(file_path, operations, result, new_messages)}{BackgroundColors.GREEN}")  # Render concise live status for the current file.
 
