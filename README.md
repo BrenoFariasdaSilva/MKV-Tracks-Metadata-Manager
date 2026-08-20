@@ -591,7 +591,7 @@ The implementation skips files or tracks safely when:
 - `mkvpropedit` returns an error for one file.
 - Post-edit FFmpeg integrity verification fails, cannot run, or finds an unreadable, corrupt, empty, missing, or unsupported modified file.
 
-Concurrent `make process` runs with different `INPUT_DIR` values use separate logs and process-scoped reports. Actual `mkvpropedit` writes are additionally protected by a per-media-file lock so overlapping input directories cannot edit the same Matroska file at the same time.
+Concurrent `make process` runs use separate run-scoped logs and reports, including runs with the same `INPUT_DIR`. Actual `mkvpropedit` writes are additionally protected by a per-media-file operating-system lock so overlapping input directories cannot edit the same Matroska file at the same time.
 
 When default-audio selection is enabled, unsupported language names fail at CLI parsing. `--default-audio-language` also requires `--audio`.
 
