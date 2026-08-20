@@ -14,6 +14,7 @@ Icon? # match Icon<CR>
 
 # Ignore the Logs directory
 **/Logs/*
+**/.make_locks/*
 
 # Ignore the Compressed Files
 **/.zip

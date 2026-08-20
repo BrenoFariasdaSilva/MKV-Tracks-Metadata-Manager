@@ -79,6 +79,7 @@ from utils.utils import calculate_execution_time, BackgroundColors  # Track and 
 PROGRESS_BAR_FORMAT = f"{BackgroundColors.GREEN}{{l_bar}}{{bar}}{{r_bar}}{BackgroundColors.RESET_ALL}"  # Render full progress bar in green.
 INPUT_DIR = "E:/Movies/"  # Store default recursive input directory.
 REPORTS_DIR = Path(__file__).with_name("Reports")  # Store report output directory beside this script.
+LOGS_DIR = Path(__file__).with_name("Logs")  # Store log output directory beside this script.
 AUDIO_REPORT_FILENAME = "audio_report.json"  # Store default audio report filename.
 SUBTITLE_REPORT_FILENAME = "subtitles_report.json"  # Store default subtitle report filename.
 UNRESOLVED_AUDIO_REPORT_FILENAME = "audio_unresolved_report.json"  # Store default unresolved audio report filename.
@@ -119,35 +120,109 @@ def build_report_prefix(input_dir: str) -> str:
     return safe_prefix if safe_prefix != "" else "input"  # Return stable fallback when input text becomes empty.
 
 
-def build_default_report_path(input_dir: str, report_filename: str) -> Path:
+def normalize_run_id(run_id: str | None) -> str:
+    """
+    Normalize a run identifier for safe artifact filenames.
+
+    :param run_id: Raw run identifier or None.
+    :return: Filesystem-safe run identifier or empty text.
+    """
+
+    if run_id is None or str(run_id).strip() == "":  # Verify caller supplied a useful run identifier.
+        return ""  # Return empty text when no run identifier is active.
+    safe_run_id = INVALID_REPORT_FILENAME_PATTERN.sub("-", str(run_id).strip()).strip(" .-")  # Replace reserved filename characters.
+    return safe_run_id  # Return sanitized run identifier.
+
+
+def build_default_report_path(input_dir: str, report_filename: str, run_id: str | None = None) -> Path:
     """
     Build the default report path for one input directory.
 
     :param input_dir: Input directory path string.
     :param report_filename: Base report filename.
+    :param run_id: Optional workflow run identifier.
     :return: Default report path.
     """
 
-    return REPORTS_DIR / f"{build_report_prefix(input_dir)}-{report_filename}"  # Return prefixed report path.
+    safe_run_id = normalize_run_id(run_id)  # Normalize optional run identifier.
+    run_part = f"{safe_run_id}-" if safe_run_id != "" else ""  # Build optional run filename segment.
+    return REPORTS_DIR / f"{build_report_prefix(input_dir)}-{run_part}{report_filename}"  # Return prefixed report path.
 
 
-def resolve_report_path(input_dir: str, report_path: str | Path | None, report_filename: str) -> Path:
+def resolve_report_path(input_dir: str, report_path: str | Path | None, report_filename: str, run_id: str | None = None) -> Path:
     """
     Resolve an explicit or default report path.
 
     :param input_dir: Input directory path string.
     :param report_path: Explicit report path or None.
     :param report_filename: Base report filename.
+    :param run_id: Optional workflow run identifier.
     :return: Resolved report path.
     """
 
     if report_path is None or str(report_path).strip() == "":  # Verify whether caller omitted a report path.
-        return build_default_report_path(input_dir, report_filename)  # Return input-prefixed default path.
+        return build_default_report_path(input_dir, report_filename, run_id)  # Return input-prefixed default path.
     return Path(report_path)  # Return explicit path unchanged.
 
 
 AUDIO_REPORT_PATH = build_default_report_path(INPUT_DIR, AUDIO_REPORT_FILENAME)  # Store default audio report path.
 SUBTITLE_REPORT_PATH = build_default_report_path(INPUT_DIR, SUBTITLE_REPORT_FILENAME)  # Store default subtitle report path.
+
+
+def read_cli_option(arguments: list[str], option_name: str, default_value: str) -> str:
+    """
+    Read one simple CLI option from an argument list.
+
+    :param arguments: CLI argument values.
+    :param option_name: Long option name to read.
+    :param default_value: Fallback value when the option is absent.
+    :return: Option value or fallback value.
+    """
+
+    for index, argument in enumerate(arguments):  # Iterate CLI arguments by position.
+        if argument == option_name and index + 1 < len(arguments):  # Verify split option form.
+            return arguments[index + 1]  # Return following argument value.
+        if argument.startswith(f"{option_name}="):  # Verify equals option form.
+            return argument.split("=", 1)[1]  # Return value after equals sign.
+    return default_value  # Return fallback value when option is absent.
+
+
+def read_input_dir_argument(arguments: list[str], default_value: str = INPUT_DIR) -> str:
+    """
+    Read the input directory from CLI arguments.
+
+    :param arguments: CLI argument values.
+    :param default_value: Fallback input directory.
+    :return: Input directory value.
+    """
+
+    return read_cli_option(arguments, "--input-dir", default_value)  # Return parsed input directory or default.
+
+
+def read_run_id_argument(arguments: list[str]) -> str:
+    """
+    Read the workflow run identifier from CLI arguments.
+
+    :param arguments: CLI argument values.
+    :return: Run identifier value or current process id.
+    """
+
+    return read_cli_option(arguments, "--run-id", str(os.getpid()))  # Return explicit run identifier or process id fallback.
+
+
+def build_log_path(script_path: Path, input_dir: str, run_id: str | None) -> Path:
+    """
+    Build a concurrency-safe log path for one script and input directory.
+
+    :param script_path: Executed script path.
+    :param input_dir: Input directory path string.
+    :param run_id: Optional workflow run identifier.
+    :return: Log file path.
+    """
+
+    safe_run_id = normalize_run_id(run_id)  # Normalize optional run identifier.
+    run_part = f"-{safe_run_id}" if safe_run_id != "" else ""  # Build optional run filename segment.
+    return LOGS_DIR / f"{build_report_prefix(input_dir)}-{script_path.stem}{run_part}.log"  # Return input-specific log path.
 
 
 @dataclass(frozen=True)
@@ -1097,13 +1172,14 @@ def write_report(report_path: Path, report_data: dict[str, dict[str, str]]) -> b
     return True  # Report successful non-empty write.
 
 
-def generate_audio_report(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, selected_file: str | None = None) -> dict[str, dict[str, str]]:
+def generate_audio_report(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, selected_file: str | None = None, run_id: str | None = None) -> dict[str, dict[str, str]]:
     """
     Generate an audio report from current audio-track metadata.
 
     :param input_dir: Input directory path string.
     :param report_path: Explicit output report path or None for default path.
     :param selected_file: Optional exact selected file under the input directory.
+    :param run_id: Optional workflow run identifier.
     :return: Generated report data.
     """
 
@@ -1112,7 +1188,7 @@ def generate_audio_report(input_dir: str = INPUT_DIR, report_path: str | Path | 
         print(f"{BackgroundColors.RED}Input directory not found{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{root_path}{BackgroundColors.RESET_ALL}")  # Report missing input directory.
         return {}  # Return empty report data without writing stale content.
 
-    output_path = resolve_report_path(input_dir, report_path, AUDIO_REPORT_FILENAME)  # Resolve default or explicit report path.
+    output_path = resolve_report_path(input_dir, report_path, AUDIO_REPORT_FILENAME, run_id)  # Resolve default or explicit report path.
     existing_desired_names = read_existing_desired_names(output_path)  # Preserve safe manual desired names.
     tracks = collect_audio_tracks(root_path, selected_file)  # Collect all audio tracks.
     report_data = build_audio_report_data(tracks, existing_desired_names)  # Build report JSON object.
@@ -1123,13 +1199,14 @@ def generate_audio_report(input_dir: str = INPUT_DIR, report_path: str | Path | 
     return report_data  # Return generated data.
 
 
-def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, selected_file: str | None = None) -> dict[str, dict[str, str]]:
+def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, selected_file: str | None = None, run_id: str | None = None) -> dict[str, dict[str, str]]:
     """
     Generate a subtitle report from current embedded subtitle-track metadata.
 
     :param input_dir: Input directory path string.
     :param report_path: Explicit subtitle report path or None for default path.
     :param selected_file: Optional exact selected file under the input directory.
+    :param run_id: Optional workflow run identifier.
     :return: Generated subtitle report data.
     """
 
@@ -1138,7 +1215,7 @@ def generate_subtitle_report(input_dir: str = INPUT_DIR, report_path: str | Path
         print(f"{BackgroundColors.RED}Input directory not found{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{root_path}{BackgroundColors.RESET_ALL}")  # Report missing input directory.
         return {}  # Return empty report data without writing stale content.
 
-    output_path = resolve_report_path(input_dir, report_path, SUBTITLE_REPORT_FILENAME)  # Resolve default or explicit subtitle report path.
+    output_path = resolve_report_path(input_dir, report_path, SUBTITLE_REPORT_FILENAME, run_id)  # Resolve default or explicit subtitle report path.
     existing_desired_names = read_existing_desired_names(output_path)  # Preserve safe manual desired names.
     tracks = collect_subtitle_tracks(root_path, selected_file)  # Collect all embedded subtitle tracks.
     report_data = build_subtitle_report_data(tracks, existing_desired_names)  # Build subtitle report JSON object.
@@ -1164,6 +1241,7 @@ def build_report_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio-report", default=None, help="Audio report output path; defaults to Reports/<input-prefix>-audio_report.json.")  # Add audio report path option.
     parser.add_argument("--subtitle-report", default=None, help="Subtitle report output path; defaults to Reports/<input-prefix>-subtitles_report.json.")  # Add subtitle report path option.
     parser.add_argument("--file", default=None, help="Exact relative or absolute MKV file under input directory.")  # Add single-file option.
+    parser.add_argument("--run-id", default=None, help="Internal workflow run identifier for process-scoped reports.")  # Add process-scoped artifact option.
     return parser  # Return configured parser.
 
 
@@ -1188,9 +1266,9 @@ def run_report_cli(arguments: list[str] | None = None) -> int:
     if parsed_args.video:  # Verify video selection was provided.
         print("Video track names are deterministic and do not need a report.")  # Report no video report file.
     if parsed_args.audio:  # Verify audio report was requested.
-        generate_audio_report(parsed_args.input_dir, parsed_args.audio_report, parsed_args.file)  # Generate audio report.
+        generate_audio_report(parsed_args.input_dir, parsed_args.audio_report, parsed_args.file, parsed_args.run_id)  # Generate audio report.
     if parsed_args.subtitles:  # Verify subtitle report was requested.
-        generate_subtitle_report(parsed_args.input_dir, parsed_args.subtitle_report, parsed_args.file)  # Generate subtitle report.
+        generate_subtitle_report(parsed_args.input_dir, parsed_args.subtitle_report, parsed_args.file, parsed_args.run_id)  # Generate subtitle report.
 
     return 0  # Return success status.
 
@@ -1202,7 +1280,7 @@ def main() -> None:
     :return: None.
     """
 
-    logger = Logger(str(Path(__file__).with_name("Logs") / f"{Path(__file__).stem}.log"), clean=True)  # Create project-local log mirror.
+    logger = Logger(str(build_log_path(Path(__file__), read_input_dir_argument(sys.argv[1:]), read_run_id_argument(sys.argv[1:]))), clean=True)  # Create input-specific log mirror.
     sys.stdout = logger  # Mirror standard output to terminal and log file.
     sys.stderr = logger  # Mirror standard error to terminal and log file.
     

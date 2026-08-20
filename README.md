@@ -470,7 +470,7 @@ Same workflow with only `INPUT_DIR` required:
 make process-all-defaults INPUT_DIR="E:/Movies/"
 ```
 
-This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` edits for each MKV in one `mkvpropedit` invocation, then verifies every successfully modified media file with read-only FFmpeg decoding.
+This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. When default report paths are used, `make process` adds a run identifier so the report stage and rename stage share private process-scoped report files and concurrent process runs do not overwrite each other. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` edits for each MKV in one `mkvpropedit` invocation, then verifies every successfully modified media file with read-only FFmpeg decoding.
 
 When subtitles are not selected, subtitle reports are not generated, subtitle content is not extracted, and subtitle track names are not changed.
 
@@ -502,17 +502,17 @@ Unknown audio or subtitle languages are skipped safely. Image-based subtitle tra
 
 ### Logging
 
-Every executable Python entrypoint mirrors terminal output to a matching UTF-8 log file under `Logs/`.
+Every executable Python entrypoint mirrors terminal output to an input-specific UTF-8 log file under `Logs/`.
 
 ```bash
-Logs/report.log
-Logs/track_metadata_renamer.log
-Logs/auto_track_metadata_renamer.log
-Logs/subtitle_report.log
-Logs/subtitle_tracks_renamer.log
+Logs/E-Movies-report-12345.log
+Logs/E-Movies-track_metadata_renamer-12345.log
+Logs/E-Movies-auto_track_metadata_renamer-12345.log
+Logs/E-Movies-subtitle_report-12345.log
+Logs/E-Movies-subtitle_tracks_renamer-12345.log
 ```
 
-The log files are overwritten each time the corresponding script starts. ANSI terminal color sequences are stripped from file output.
+The log filename includes the sanitized input-directory identity and a run identifier. ANSI terminal color sequences are stripped from file output.
 
 ### Direct Python execution
 
@@ -564,6 +564,7 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 - [subtitle_language_detector.py](subtitle_language_detector.py): Resolves embedded subtitle language from metadata first, then text subtitle content when available.
 - [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio/subtitle track `name=` metadata and selected audio/subtitle `flag-default=` metadata only.
 - [Logger.py](Logger.py): Mirrors executable script terminal output to matching files under `Logs/`.
+- [dependency_lock_runner.py](dependency_lock_runner.py): Serializes shared virtual environment setup from concurrent Makefile runs.
 - [install_windows.bat](install_windows.bat): Windows dependency installer.
 - [install_linux.sh](install_linux.sh): Linux dependency installer.
 - [install_macos.sh](install_macos.sh): macOS dependency installer.
@@ -589,6 +590,8 @@ The implementation skips files or tracks safely when:
 - `ffprobe`, `mkvmerge`, `ffmpeg`, or `mkvpropedit` is unavailable.
 - `mkvpropedit` returns an error for one file.
 - Post-edit FFmpeg integrity verification fails, cannot run, or finds an unreadable, corrupt, empty, missing, or unsupported modified file.
+
+Concurrent `make process` runs with different `INPUT_DIR` values use separate logs and process-scoped reports. Actual `mkvpropedit` writes are additionally protected by a per-media-file lock so overlapping input directories cannot edit the same Matroska file at the same time.
 
 When default-audio selection is enabled, unsupported language names fail at CLI parsing. `--default-audio-language` also requires `--audio`.
 

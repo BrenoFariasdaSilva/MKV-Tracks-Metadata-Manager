@@ -61,14 +61,15 @@ from dataclasses import dataclass, field  # Define typed workflow records.
 from pathlib import Path  # Represent filesystem paths.
 from typing import Any  # Type dynamic JSON data.
 import json  # Read report JSON.
+import os  # Build process-scoped run identifiers when needed.
 import sys  # Return meaningful CLI exit statuses.
 from tqdm import tqdm  # Display rename progress without flooding the terminal.
 
 from audio_language_detector import normalize_language_value  # Reuse canonical language normalization.
 from Logger import Logger  # Mirror terminal output to a log file.
 from media_integrity_verifier import verify_mkvpropedit_results  # Verify modified media after successful metadata edits.
-from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, apply_track_metadata_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
-from report import AUDIO_REPORT_FILENAME, INPUT_DIR, PROGRESS_BAR_FORMAT, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, BackgroundColors, build_audio_report_data, build_subtitle_detected_name, discover_supported_files, format_colored_status, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
+from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, acquire_media_edit_lock, apply_track_metadata_edits, build_track_selector, release_media_edit_lock, valid_target_name  # Apply mkvpropedit edits.
+from report import AUDIO_REPORT_FILENAME, INPUT_DIR, PROGRESS_BAR_FORMAT, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, BackgroundColors, build_audio_report_data, build_log_path, build_subtitle_detected_name, discover_supported_files, format_colored_status, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_input_dir_argument, read_run_id_argument, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
 from utils.utils import calculate_execution_time  # Track and display execution time.
 
 
@@ -1012,38 +1013,42 @@ def apply_grouped_renames(grouped_plans: dict[Path, list[PlannedRename]], groupe
             operations: list[TrackMetadataEdit] = []  # Store combined file operations.
             audio_default_operations: list[TrackMetadataEdit] = []  # Store audio default operations for summary.
             result: MkvpropeditResult | None = None  # Track optional edit result for live status rendering.
-            video_operation = validate_video_plan_for_file(file_path, input_dir, summary) if include_video and file_path in current_supported_files else None  # Validate deterministic video operation.
-            if video_operation is not None:  # Verify video operation exists.
-                operations.append(video_operation)  # Add video operation first.
-            if file_path in grouped_plans:  # Verify report has audio plans for this file.
-                operations.extend(validate_audio_plans_for_file(file_path, grouped_plans[file_path], input_dir, summary))  # Add validated audio operations.
-                audio_default_operations = plan_default_audio_edits(file_path, grouped_plans[file_path], input_dir, summary, default_audio)  # Build validated audio default-flag operations.
-                operations.extend(audio_default_operations)  # Add validated audio default-flag operations.
-            if file_path in grouped_subtitle_plans:  # Verify subtitle report has plans for this file.
-                operations.extend(validate_subtitle_plans_for_file(file_path, grouped_subtitle_plans[file_path], input_dir, summary))  # Add validated subtitle operations.
-            subtitle_default_operations = plan_default_subtitle_edits(file_path, grouped_subtitle_plans.get(file_path, []), input_dir, summary, default_subtitle)  # Build validated subtitle default-flag operations.
-            operations.extend(subtitle_default_operations)  # Add validated subtitle default-flag operations.
-            if operations:  # Verify file has edits after validation.
-                audio_default_change_count = len(audio_default_operations) if file_path in grouped_plans else 0  # Count planned audio default setters for result summary.
-                subtitle_default_change_count = len(subtitle_default_operations)  # Count planned subtitle default setters for result summary.
-                result = apply_track_metadata_edits(file_path, operations)  # Apply mkvpropedit edits.
-                results.append(result)  # Store command result.
-                if result.success and result.warning:  # Verify mkvpropedit completed with warnings.
-                    summary.changed += result.changed_count  # Count changes because MKVToolNix continued after warnings.
-                    summary.default_changed += audio_default_change_count  # Count audio default-flag changes because MKVToolNix completed with warnings.
-                    summary.subtitle_default_changed += subtitle_default_change_count  # Count subtitle default-flag changes because MKVToolNix completed with warnings.
-                    summary.warnings += 1  # Count warning-bearing file.
-                    warning_text = (result.stderr or result.stdout).strip()  # Resolve warning output text.
-                    summary.messages.append(f"mkvpropedit warning for {file_path}: {warning_text}")  # Store warning reason.
-                elif result.success:  # Verify mkvpropedit succeeded cleanly.
-                    summary.changed += result.changed_count  # Count successful changes.
-                    summary.default_changed += audio_default_change_count  # Count successful audio default-flag changes.
-                    summary.subtitle_default_changed += subtitle_default_change_count  # Count successful subtitle default-flag changes.
-                else:  # Handle mkvpropedit failure.
-                    summary.failed += result.changed_count  # Count failed changes.
-                    summary.messages.append(f"mkvpropedit failed for {file_path}: {result.stderr.strip()}")  # Store failure reason.
-                    for plan in grouped_plans.get(file_path, []):  # Iterate failed audio plans for this file.
-                        store_unresolved_audio_plan(summary, plan)  # Store mkvpropedit-failed occurrence for manual review.
+            file_lock_path = acquire_media_edit_lock(file_path) if file_path in current_supported_files else None  # Acquire per-media lock before validation and edit.
+            try:  # Validate and edit while holding the media lock when applicable.
+                video_operation = validate_video_plan_for_file(file_path, input_dir, summary) if include_video and file_path in current_supported_files else None  # Validate deterministic video operation.
+                if video_operation is not None:  # Verify video operation exists.
+                    operations.append(video_operation)  # Add video operation first.
+                if file_path in grouped_plans:  # Verify report has audio plans for this file.
+                    operations.extend(validate_audio_plans_for_file(file_path, grouped_plans[file_path], input_dir, summary))  # Add validated audio operations.
+                    audio_default_operations = plan_default_audio_edits(file_path, grouped_plans[file_path], input_dir, summary, default_audio)  # Build validated audio default-flag operations.
+                    operations.extend(audio_default_operations)  # Add validated audio default-flag operations.
+                if file_path in grouped_subtitle_plans:  # Verify subtitle report has plans for this file.
+                    operations.extend(validate_subtitle_plans_for_file(file_path, grouped_subtitle_plans[file_path], input_dir, summary))  # Add validated subtitle operations.
+                subtitle_default_operations = plan_default_subtitle_edits(file_path, grouped_subtitle_plans.get(file_path, []), input_dir, summary, default_subtitle)  # Build validated subtitle default-flag operations.
+                operations.extend(subtitle_default_operations)  # Add validated subtitle default-flag operations.
+                if operations:  # Verify file has edits after validation.
+                    audio_default_change_count = len(audio_default_operations) if file_path in grouped_plans else 0  # Count planned audio default setters for result summary.
+                    subtitle_default_change_count = len(subtitle_default_operations)  # Count planned subtitle default setters for result summary.
+                    result = apply_track_metadata_edits(file_path, operations, file_lock_path is not None)  # Apply mkvpropedit edits.
+                    results.append(result)  # Store command result.
+                    if result.success and result.warning:  # Verify mkvpropedit completed with warnings.
+                        summary.changed += result.changed_count  # Count changes because MKVToolNix continued after warnings.
+                        summary.default_changed += audio_default_change_count  # Count audio default-flag changes because MKVToolNix completed with warnings.
+                        summary.subtitle_default_changed += subtitle_default_change_count  # Count subtitle default-flag changes because MKVToolNix completed with warnings.
+                        summary.warnings += 1  # Count warning-bearing file.
+                        warning_text = (result.stderr or result.stdout).strip()  # Resolve warning output text.
+                        summary.messages.append(f"mkvpropedit warning for {file_path}: {warning_text}")  # Store warning reason.
+                    elif result.success:  # Verify mkvpropedit succeeded cleanly.
+                        summary.changed += result.changed_count  # Count successful changes.
+                        summary.default_changed += audio_default_change_count  # Count successful audio default-flag changes.
+                        summary.subtitle_default_changed += subtitle_default_change_count  # Count successful subtitle default-flag changes.
+                    else:  # Handle mkvpropedit failure.
+                        summary.failed += result.changed_count  # Count failed changes.
+                        summary.messages.append(f"mkvpropedit failed for {file_path}: {result.stderr.strip()}")  # Store failure reason.
+                        for plan in grouped_plans.get(file_path, []):  # Iterate failed audio plans for this file.
+                            store_unresolved_audio_plan(summary, plan)  # Store mkvpropedit-failed occurrence for manual review.
+            finally:  # Ensure media lock release after validation and edit.
+                release_media_edit_lock(file_lock_path) if file_lock_path is not None else None  # Release per-media lock when acquired.
             new_messages = summary.messages[message_count_before:]  # Read messages emitted while processing this file.
             progress_bar.set_description(f"{BackgroundColors.GREEN}{build_rename_progress_status(file_path, operations, result, new_messages)}{BackgroundColors.GREEN}")  # Render concise live status for the current file.
 
@@ -1214,7 +1219,7 @@ def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bo
     return summary  # Return workflow summary.
 
 
-def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, subtitle_report_path: str | Path | None = None, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: str | Path | None = None, default_subtitle: DefaultSubtitleConfig = DefaultSubtitleConfig()) -> RenameSummary:
+def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, subtitle_report_path: str | Path | None = None, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: str | Path | None = None, default_subtitle: DefaultSubtitleConfig = DefaultSubtitleConfig(), run_id: str | None = None) -> RenameSummary:
     """
     Rename deterministic video names plus report-driven audio and subtitle names.
 
@@ -1228,6 +1233,7 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | 
     :param default_audio: Default-audio configuration.
     :param unresolved_audio_report_path: Explicit audio report path for skipped or failed audio occurrences.
     :param default_subtitle: Default-subtitle configuration.
+    :param run_id: Optional workflow run identifier.
     :return: Rename workflow summary.
     """
 
@@ -1238,9 +1244,9 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | 
         summary.failed += 1  # Count missing input as failure.
         return summary  # Return summary.
 
-    resolved_report_path = resolve_report_path(input_dir, report_path, AUDIO_REPORT_FILENAME)  # Resolve default or explicit audio report path.
-    resolved_subtitle_report_path = resolve_report_path(input_dir, subtitle_report_path, SUBTITLE_REPORT_FILENAME)  # Resolve default or explicit subtitle report path.
-    resolved_unresolved_audio_report_path = resolve_report_path(input_dir, unresolved_audio_report_path, UNRESOLVED_AUDIO_REPORT_FILENAME)  # Resolve default or explicit unresolved audio report path.
+    resolved_report_path = resolve_report_path(input_dir, report_path, AUDIO_REPORT_FILENAME, run_id)  # Resolve default or explicit audio report path.
+    resolved_subtitle_report_path = resolve_report_path(input_dir, subtitle_report_path, SUBTITLE_REPORT_FILENAME, run_id)  # Resolve default or explicit subtitle report path.
+    resolved_unresolved_audio_report_path = resolve_report_path(input_dir, unresolved_audio_report_path, UNRESOLVED_AUDIO_REPORT_FILENAME, run_id)  # Resolve default or explicit unresolved audio report path.
     report_data = load_report_data(resolved_report_path) if include_audio else {}  # Load audio report only when selected.
     if report_data is None:  # Verify required audio report loaded.
         summary.failed += 1  # Count missing or malformed report.
@@ -1265,7 +1271,7 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | 
     return summary  # Return workflow summary.
 
 
-def process_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, subtitle_report_path: str | Path | None = None, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: str | Path | None = None, default_subtitle: DefaultSubtitleConfig = DefaultSubtitleConfig()) -> RenameSummary:
+def process_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, subtitle_report_path: str | Path | None = None, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: str | Path | None = None, default_subtitle: DefaultSubtitleConfig = DefaultSubtitleConfig(), run_id: str | None = None) -> RenameSummary:
     """
     Generate selected reports and apply selected track-name metadata changes.
 
@@ -1279,6 +1285,7 @@ def process_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path |
     :param default_audio: Default-audio configuration.
     :param unresolved_audio_report_path: Explicit audio report path for skipped or failed audio occurrences.
     :param default_subtitle: Default-subtitle configuration.
+    :param run_id: Optional workflow run identifier.
     :return: Rename workflow summary.
     """
 
@@ -1293,11 +1300,11 @@ def process_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path |
         return summary  # Return summary.
 
     if include_audio:  # Verify audio processing was selected.
-        generate_audio_report(input_dir, report_path, selected_file)  # Generate selected audio report.
+        generate_audio_report(input_dir, report_path, selected_file, run_id)  # Generate selected audio report.
     if include_subtitles:  # Verify subtitle processing was selected.
-        generate_subtitle_report(input_dir, subtitle_report_path, selected_file)  # Generate selected subtitle report.
+        generate_subtitle_report(input_dir, subtitle_report_path, selected_file, run_id)  # Generate selected subtitle report.
 
-    return rename_track_metadata(input_dir, report_path, subtitle_report_path, include_video, include_audio, include_subtitles, selected_file, default_audio, unresolved_audio_report_path, default_subtitle)  # Apply selected metadata changes.
+    return rename_track_metadata(input_dir, report_path, subtitle_report_path, include_video, include_audio, include_subtitles, selected_file, default_audio, unresolved_audio_report_path, default_subtitle, run_id)  # Apply selected metadata changes.
 
 
 def add_track_type_arguments(parser: argparse.ArgumentParser, include_video: bool) -> None:
@@ -1328,6 +1335,7 @@ def add_path_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--subtitle-report", default=None, help="Subtitle report JSON path; defaults to Reports/<input-prefix>-subtitles_report.json.")  # Add subtitle report path option.
     parser.add_argument("--unresolved-audio-report", default=None, help="Audio report path for skipped or failed audio occurrences; defaults to Reports/<input-prefix>-audio_unresolved_report.json.")  # Add unresolved audio report path option.
     parser.add_argument("--file", default=None, help="Exact relative or absolute MKV file under input directory.")  # Add single-file option.
+    parser.add_argument("--run-id", default=None, help="Internal workflow run identifier for process-scoped reports.")  # Add process-scoped artifact option.
 
 
 def read_track_selection(parsed_args: argparse.Namespace, include_video: bool) -> TrackSelection:
@@ -1485,11 +1493,11 @@ def run_rename_cli(arguments: list[str] | None = None) -> int:
     require_track_selection(parser, selection)  # Require explicit selection.
     default_audio = read_default_audio_config(parser, parsed_args, selection)  # Read default-audio configuration.
     default_subtitle = read_default_subtitle_config(parser, parsed_args, selection)  # Read default-subtitle configuration.
-    audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.audio_report, AUDIO_REPORT_FILENAME)  # Resolve default or explicit audio report path.
-    subtitle_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.subtitle_report, SUBTITLE_REPORT_FILENAME)  # Resolve default or explicit subtitle report path.
-    unresolved_audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.unresolved_audio_report, UNRESOLVED_AUDIO_REPORT_FILENAME)  # Resolve default or explicit unresolved report path.
+    audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.audio_report, AUDIO_REPORT_FILENAME, parsed_args.run_id)  # Resolve default or explicit audio report path.
+    subtitle_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.subtitle_report, SUBTITLE_REPORT_FILENAME, parsed_args.run_id)  # Resolve default or explicit subtitle report path.
+    unresolved_audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.unresolved_audio_report, UNRESOLVED_AUDIO_REPORT_FILENAME, parsed_args.run_id)  # Resolve default or explicit unresolved report path.
     validate_unresolved_report_path(parser, audio_report_path, unresolved_audio_report_path)  # Validate unresolved report output path.
-    summary = rename_track_metadata(parsed_args.input_dir, audio_report_path, subtitle_report_path, selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, unresolved_audio_report_path, default_subtitle)  # Run selected rename workflow.
+    summary = rename_track_metadata(parsed_args.input_dir, audio_report_path, subtitle_report_path, selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, unresolved_audio_report_path, default_subtitle, parsed_args.run_id)  # Run selected rename workflow.
     return 1 if summary.failed > 0 else 0  # Return nonzero when workflow failed.
 
 
@@ -1507,11 +1515,12 @@ def run_process_cli(arguments: list[str] | None = None) -> int:
     require_track_selection(parser, selection)  # Require explicit selection.
     default_audio = read_default_audio_config(parser, parsed_args, selection)  # Read default-audio configuration.
     default_subtitle = read_default_subtitle_config(parser, parsed_args, selection)  # Read default-subtitle configuration.
-    audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.audio_report, AUDIO_REPORT_FILENAME)  # Resolve default or explicit audio report path.
-    subtitle_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.subtitle_report, SUBTITLE_REPORT_FILENAME)  # Resolve default or explicit subtitle report path.
-    unresolved_audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.unresolved_audio_report, UNRESOLVED_AUDIO_REPORT_FILENAME)  # Resolve default or explicit unresolved report path.
+    workflow_run_id = parsed_args.run_id if parsed_args.run_id is not None else str(os.getpid())  # Resolve integrated workflow run identifier.
+    audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.audio_report, AUDIO_REPORT_FILENAME, workflow_run_id)  # Resolve default or explicit audio report path.
+    subtitle_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.subtitle_report, SUBTITLE_REPORT_FILENAME, workflow_run_id)  # Resolve default or explicit subtitle report path.
+    unresolved_audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.unresolved_audio_report, UNRESOLVED_AUDIO_REPORT_FILENAME, workflow_run_id)  # Resolve default or explicit unresolved report path.
     validate_unresolved_report_path(parser, audio_report_path, unresolved_audio_report_path)  # Validate unresolved report output path.
-    summary = process_track_metadata(parsed_args.input_dir, audio_report_path, subtitle_report_path, selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, unresolved_audio_report_path, default_subtitle)  # Run integrated workflow.
+    summary = process_track_metadata(parsed_args.input_dir, audio_report_path, subtitle_report_path, selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, unresolved_audio_report_path, default_subtitle, workflow_run_id)  # Run integrated workflow.
     return 1 if summary.failed > 0 else 0  # Return nonzero when workflow failed.
 
 
@@ -1552,7 +1561,7 @@ def main() -> None:
     :return: None.
     """
 
-    logger = Logger(str(Path(__file__).with_name("Logs") / f"{Path(__file__).stem}.log"), clean=True)  # Create project-local log mirror.
+    logger = Logger(str(build_log_path(Path(__file__), read_input_dir_argument(sys.argv[1:]), read_run_id_argument(sys.argv[1:]))), clean=True)  # Create input-specific log mirror.
     sys.stdout = logger  # Mirror standard output to terminal and log file.
     sys.stderr = logger  # Mirror standard error to terminal and log file.
     

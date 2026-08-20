@@ -48,6 +48,9 @@ endif
 
 # Logs directory
 LOG_DIR := ./Logs
+ifeq ($(origin RUN_ID), undefined)
+RUN_ID := $(shell $(PYTHON_CMD) -c "import os; print(os.getpid())")
+endif
 COMMON_CLI_ARGS :=
 ifneq ($(strip $(INPUT_DIR)),)
 COMMON_CLI_ARGS += --input-dir "$(INPUT_DIR)"
@@ -63,11 +66,14 @@ COMMON_CLI_ARGS += --file "$(FILE)"
 endif
 CLI_ARGS := $(ARGS) $(COMMON_CLI_ARGS)
 REPORT_CLI_ARGS := $(REPORT_ARGS) $(COMMON_CLI_ARGS)
+PROCESS_REPORT_CLI_ARGS := $(REPORT_ARGS) $(COMMON_CLI_ARGS) --run-id "$(RUN_ID)"
 RENAME_TARGET_CLI_ARGS := $(ARGS) $(COMMON_CLI_ARGS)
 RENAME_CLI_ARGS := $(RENAME_ARGS) $(COMMON_CLI_ARGS)
+PROCESS_RENAME_CLI_ARGS := $(RENAME_ARGS) $(COMMON_CLI_ARGS) --run-id "$(RUN_ID)"
 ifneq ($(strip $(UNRESOLVED_AUDIO_REPORT)),)
 RENAME_TARGET_CLI_ARGS += --unresolved-audio-report "$(UNRESOLVED_AUDIO_REPORT)"
 RENAME_CLI_ARGS += --unresolved-audio-report "$(UNRESOLVED_AUDIO_REPORT)"
+PROCESS_RENAME_CLI_ARGS += --unresolved-audio-report "$(UNRESOLVED_AUDIO_REPORT)"
 endif
 
 # Ensure logs directory exists (cross-platform)
@@ -91,7 +97,7 @@ RUN_AND_LOG = \ # Unix-like
 if [ -z "$(DETACH)" ]; then \
 	$(PYTHON) $(1); \
 else \
-	LOG_FILE=$(LOG_DIR)/$$(basename $(1) .py).log; \
+	LOG_FILE=$(LOG_DIR)/$$(basename $(1) .py)-$(RUN_ID).log; \
 	nohup $(PYTHON) $(1) > $$LOG_FILE 2>&1 & \
 	tail -f $$LOG_FILE; \
 fi
@@ -131,8 +137,8 @@ reports: dependencies
 process: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(PYTHON) ./report.py $(REPORT_CLI_ARGS)
-	$(PYTHON) ./track_metadata_renamer.py $(RENAME_CLI_ARGS)
+	$(PYTHON) ./report.py $(PROCESS_REPORT_CLI_ARGS)
+	$(PYTHON) ./track_metadata_renamer.py $(PROCESS_RENAME_CLI_ARGS)
 
 auto: process
 
@@ -168,12 +174,12 @@ rename_subtitles: dependencies
 # Create virtual environment if missing
 $(VENV):
 	@echo "Creating virtual environment..."
-	$(PYTHON_CMD) -m venv $(VENV)
-	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON_CMD) ./dependency_lock_runner.py --skip-existing "$(PYTHON)" -- $(PYTHON_CMD) -m venv $(VENV)
+	$(PYTHON_CMD) ./dependency_lock_runner.py -- $(PYTHON) -m pip install --upgrade pip
 
 dependencies: $(VENV)
 	@echo "Installing/Updating Python dependencies..."
-	$(PIP) install -r requirements.txt
+	$(PYTHON_CMD) ./dependency_lock_runner.py -- $(PIP) install -r requirements.txt
 
 # Generate requirements.txt from current venv
 generate_requirements: $(VENV)

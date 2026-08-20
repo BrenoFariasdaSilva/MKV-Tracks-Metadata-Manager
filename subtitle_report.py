@@ -58,7 +58,7 @@ import sys  # Read forwarded CLI arguments.
 from pathlib import Path  # Build project-local log paths.
 
 from Logger import Logger  # Mirror terminal output to a log file.
-from report import run_report_cli  # Reuse report generation CLI.
+from report import INPUT_DIR, build_log_path, read_input_dir_argument, read_run_id_argument, run_report_cli  # Reuse report generation CLI and log naming.
 from utils.utils import calculate_execution_time, BackgroundColors  # Track and display execution time.
 
 
@@ -69,7 +69,7 @@ def main() -> None:
     :return: None.
     """
 
-    logger = Logger(str(Path(__file__).with_name("Logs") / f"{Path(__file__).stem}.log"), clean=True)  # Create project-local log mirror.
+    logger = Logger(str(build_log_path(Path(__file__), read_input_dir_argument(sys.argv[1:], INPUT_DIR), read_run_id_argument(sys.argv[1:]))), clean=True)  # Create input-specific log mirror.
     sys.stdout = logger  # Mirror standard output to terminal and log file.
     sys.stderr = logger  # Mirror standard error to terminal and log file.
     

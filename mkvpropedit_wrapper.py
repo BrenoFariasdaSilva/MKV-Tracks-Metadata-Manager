@@ -52,10 +52,18 @@ Assumptions & Notes:
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
 
 from dataclasses import dataclass  # Define typed records.
+import hashlib  # Build compact lock filenames from resolved media paths.
 import os  # Read platform-specific installation directories.
 from pathlib import Path  # Represent media file paths.
 import shutil  # Locate external executables.
 import subprocess  # Run mkvpropedit safely with argument lists.
+import tempfile  # Store cross-process edit locks in the system temporary directory.
+import time  # Wait briefly when another process edits the same media file.
+
+
+MEDIA_LOCK_DIR = Path(tempfile.gettempdir()) / "mkv_tracks_metadata_manager_locks"  # Store per-media-file edit locks outside the repository.
+MEDIA_LOCK_STALE_SECONDS = 86400.0  # Allow cleanup of abandoned edit locks after one day.
+MEDIA_LOCK_RETRY_SECONDS = 0.25  # Wait interval between same-file edit lock attempts.
 
 
 @dataclass(frozen=True)
@@ -316,12 +324,84 @@ def count_requested_setters(command: list[str]) -> int:
     return sum(1 for argument in command if argument == "--set")  # Count explicit setter flags.
 
 
-def apply_track_metadata_edits(file_path: Path, edits: list[TrackMetadataEdit]) -> MkvpropeditResult:
+def build_media_lock_path(file_path: Path) -> Path:
+    """
+    Build a cross-process lock path for one media file.
+
+    :param file_path: Matroska file path.
+    :return: Lock file path.
+    """
+
+    resolved_path = file_path.resolve(strict=False)  # Resolve media path without requiring existence.
+    lock_identity = str(resolved_path).casefold() if os.name == "nt" else str(resolved_path)  # Normalize Windows path casing for shared-file identity.
+    lock_hash = hashlib.sha256(lock_identity.encode("utf-8")).hexdigest()  # Build deterministic compact lock identity.
+    return MEDIA_LOCK_DIR / f"{lock_hash}.lock"  # Return lock file path.
+
+
+def remove_stale_media_lock(lock_path: Path) -> None:
+    """
+    Remove an abandoned media lock when it is old enough.
+
+    :param lock_path: Lock file path.
+    :return: None.
+    """
+
+    try:  # Read lock file age.
+        lock_age = time.time() - lock_path.stat().st_mtime  # Calculate lock age in seconds.
+    except OSError:  # Handle lock disappearing between attempts.
+        return  # Return when no stale lock can be removed.
+    if lock_age <= MEDIA_LOCK_STALE_SECONDS:  # Verify lock is not stale enough.
+        return  # Keep active or recently abandoned lock.
+    try:  # Remove stale lock.
+        lock_path.unlink()  # Delete abandoned lock file.
+    except OSError:  # Handle concurrent lock removal.
+        return  # Return after harmless race.
+
+
+def acquire_media_edit_lock(file_path: Path) -> Path:
+    """
+    Acquire an exclusive edit lock for one media file.
+
+    :param file_path: Matroska file path.
+    :return: Acquired lock file path.
+    """
+
+    MEDIA_LOCK_DIR.mkdir(parents=True, exist_ok=True)  # Ensure lock directory exists.
+    lock_path = build_media_lock_path(file_path)  # Build target lock path.
+    lock_payload = f"pid={os.getpid()}\nfile={file_path.resolve(strict=False)}\n"  # Build diagnostic lock payload.
+    while True:  # Wait until this process owns the file lock.
+        try:  # Attempt atomic lock creation.
+            lock_descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)  # Create lock file atomically.
+        except FileExistsError:  # Handle another active edit process.
+            remove_stale_media_lock(lock_path)  # Remove abandoned lock only when old enough.
+            time.sleep(MEDIA_LOCK_RETRY_SECONDS)  # Wait before retrying the same media file.
+            continue  # Retry lock acquisition.
+        with os.fdopen(lock_descriptor, "w", encoding="utf-8") as lock_file:  # Open acquired lock descriptor.
+            lock_file.write(lock_payload)  # Write diagnostic owner data.
+        return lock_path  # Return acquired lock path.
+
+
+def release_media_edit_lock(lock_path: Path) -> None:
+    """
+    Release an acquired media edit lock.
+
+    :param lock_path: Lock file path.
+    :return: None.
+    """
+
+    try:  # Remove owned lock file.
+        lock_path.unlink()  # Release edit lock.
+    except OSError:  # Handle already removed lock.
+        return  # Ignore release race.
+
+
+def apply_track_metadata_edits(file_path: Path, edits: list[TrackMetadataEdit], media_lock_held: bool = False) -> MkvpropeditResult:
     """
     Apply permitted track metadata edits through mkvpropedit.
 
     :param file_path: Matroska file path.
     :param edits: Track metadata edit operations.
+    :param media_lock_held: Whether caller already holds the media edit lock.
     :return: mkvpropedit execution result.
     """
 
@@ -342,10 +422,13 @@ def apply_track_metadata_edits(file_path: Path, edits: list[TrackMetadataEdit]) 
     if not command_sets_only_permitted_track_metadata(command):  # Verify generated command scope.
         return MkvpropeditResult(file_path, command, 2, "", "unsafe mkvpropedit command rejected", 0, False, False)  # Return rejected-command failure.
 
-    try:  # Execute mkvpropedit.
+    lock_path = None if media_lock_held else acquire_media_edit_lock(file_path)  # Acquire exclusive lock unless caller already owns it.
+    try:  # Execute mkvpropedit while holding the media lock.
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)  # Run command safely.
     except OSError as error:  # Handle execution failure.
         return MkvpropeditResult(file_path, command, 126, "", str(error), changed_count, False, False)  # Return execution failure.
+    finally:  # Ensure lock release after command execution.
+        release_media_edit_lock(lock_path) if lock_path is not None else None  # Release exclusive media lock when acquired here.
 
     warning = result.returncode == 1  # Resolve MKVToolNix warning exit status.
     success = result.returncode in {0, 1}  # Resolve completion status from MKVToolNix exit codes.
