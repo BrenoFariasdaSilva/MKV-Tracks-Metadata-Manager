@@ -66,6 +66,7 @@ from tqdm import tqdm  # Display rename progress without flooding the terminal.
 
 from audio_language_detector import normalize_language_value  # Reuse canonical language normalization.
 from Logger import Logger  # Mirror terminal output to a log file.
+from media_integrity_verifier import verify_mkvpropedit_results  # Verify modified media after successful metadata edits.
 from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, apply_track_metadata_edits, build_track_selector, valid_target_name  # Apply mkvpropedit edits.
 from report import AUDIO_REPORT_FILENAME, INPUT_DIR, PROGRESS_BAR_FORMAT, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, BackgroundColors, build_audio_report_data, build_subtitle_detected_name, discover_supported_files, format_colored_status, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
 from utils.utils import calculate_execution_time  # Track and display execution time.
@@ -1204,7 +1205,9 @@ def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bo
         return summary  # Return summary.
 
     grouped_plans, grouped_subtitle_plans = collect_detected_plans(root_path, summary, include_audio, include_subtitles, selected_file)  # Collect automatic detected plans.
-    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file, default_audio, default_subtitle)  # Apply validated rename operations.
+    edit_results = apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file, default_audio, default_subtitle)  # Apply validated rename operations.
+    integrity_summary = verify_mkvpropedit_results(edit_results)  # Verify media integrity after successful metadata edits.
+    summary.failed += integrity_summary.failed  # Propagate integrity failures to workflow exit status.
 
     print_rename_summary(summary)  # Report summary counts plus standalone errors and warnings.
 
@@ -1251,7 +1254,9 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | 
         return summary  # Return summary.
     planned_subtitle_renames = collect_planned_subtitle_renames(subtitle_report_data, root_path, summary) if include_subtitles else []  # Collect selected subtitle rename requests.
     grouped_subtitle_plans = group_subtitle_plans_by_file(planned_subtitle_renames)  # Group subtitle plans by media file.
-    apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file, default_audio, default_subtitle)  # Apply validated rename operations.
+    edit_results = apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file, default_audio, default_subtitle)  # Apply validated rename operations.
+    integrity_summary = verify_mkvpropedit_results(edit_results)  # Verify media integrity after successful metadata edits.
+    summary.failed += integrity_summary.failed  # Propagate integrity failures to workflow exit status.
     if include_audio:  # Verify audio workflow was selected.
         write_unresolved_audio_report(summary, resolved_unresolved_audio_report_path)  # Write editable unresolved audio report.
 

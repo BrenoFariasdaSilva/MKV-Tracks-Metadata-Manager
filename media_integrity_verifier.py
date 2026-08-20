@@ -1,412 +1,274 @@
 """
 ================================================================================
-<PROJECT OR SCRIPT TITLE>
+Media Integrity Verifier
 ================================================================================
 Author      : Breno Farias da Silva
-Created     : <YYYY-MM-DD>
+Created     : 2026-08-20
 Description :
-    <Provide a concise and complete overview of what this script does.>
-    <Mention its purpose, scope, and relevance to the larger project.>
+    Verifies Matroska media-file integrity after metadata-only edits finish.
+    Runs read-only ffprobe inspection and FFmpeg decoding against files modified
+    by mkvpropedit and reports container or stream errors without remuxing,
+    re-encoding, deleting, replacing, or otherwise modifying media files.
 
     Key features include:
-        - <Feature 1 — e.g., automatic data loading and preprocessing>
-        - <Feature 2 — e.g., model training and evaluation>
-        - <Feature 3 — e.g., visualization or report generation>
-        - <Feature 4 — e.g., logging or notification system>
-        - <Feature 5 — e.g., integration with other modules or datasets>
+        - Post-metadata read-only media verification
+        - ffprobe container inspection and FFmpeg decoding with strict returns
+        - Safe executable discovery through the existing MKVToolNix wrapper
+        - Colored in-place progress display for batch verification
+        - Final verification summary with failed file details
 
 Usage:
-    1. <Explain any configuration steps before running, such as editing variables or paths.>
-    2. <Describe how to execute the script — typically via Makefile or Python.>
-        $ make <target>   or   $ python <script_name>.py
-    3. <List what outputs are expected or where results are saved.>
+    1. Run the normal metadata workflow via Makefile or Python.
+    2. Integrity verification runs after successful metadata edits.
+        $ make process REPORT_ARGS="--audio" RENAME_ARGS="--video --audio"
+    3. Review terminal output and Logs/track_metadata_renamer.log for failures.
 
 Outputs:
-    - <Output file or directory 1 — e.g., results.csv>
-    - <Output file or directory 2 — e.g., Feature_Analysis/plots/>
-    - <Output file or directory 3 — e.g., logs/output.txt>
+    - Console summary showing successful and failed media verification results
+    - Logs/track_metadata_renamer.log entries through the calling workflow
+    - Nonzero workflow status when any modified file fails verification
 
 TODOs:
-    - <Add a task or improvement — e.g., implement CLI argument parsing.>
-    - <Add another improvement — e.g., extend support to Parquet files.>
-    - <Add optimization — e.g., parallelize evaluation loop.>
-    - <Add robustness — e.g., error handling or data validation.>
+    - Add optional user-controlled sampling mode if full-file decoding becomes too slow.
 
 Dependencies:
-    - Python >= <version>
-    - <Library 1 — e.g., pandas>
-    - <Library 2 — e.g., numpy>
-    - <Library 3 — e.g., scikit-learn>
-    - <Library 4 — e.g., matplotlib, seaborn, tqdm, colorama>
+    - Python >= 3.8
+    - FFmpeg (ffmpeg and ffprobe executables)
+    - tqdm >= 4.70.0 (progress bar display)
+    - colorama >= 0.4.6 (terminal colors)
 
 Assumptions & Notes:
-    - <List any key assumptions — e.g., last column is the target variable.>
-    - <Mention data format — e.g., CSV files only.>
-    - <Mention platform or OS-specific notes — e.g., sound disabled on Windows.>
-    - <Note on output structure or reusability.>
+    - Input files are Matroska containers already supported by this project.
+    - Verification is read-only and never creates replacement media files.
+    - ffprobe or FFmpeg failures mean verification failure, not successful media validation.
 """
 
-import atexit  # For playing a sound when the program finishes
-import datetime  # For getting the current date and time
-import os  # For running a command in the terminal
-import platform  # For getting the operating system name
-import sys  # For system-specific parameters and functions
-from colorama import Style  # For coloring the terminal
-from Logger import Logger  # For logging output to both terminal and file
-from pathlib import Path  # For handling file paths
+from __future__ import annotations  # Enable modern annotations on supported Python versions.
+
+from dataclasses import dataclass, field  # Define typed verification records.
+from pathlib import Path  # Represent media file paths.
+import subprocess  # Run FFmpeg safely with argument lists.
+from tqdm import tqdm  # Display verification progress without flooding the terminal.
+
+from mkvpropedit_wrapper import MkvpropeditResult, find_executable  # Reuse project executable discovery and edit results.
+from report import PROGRESS_BAR_FORMAT, SUPPORTED_EXTENSIONS, BackgroundColors  # Reuse media scope and terminal colors.
 
 
-# Macros:
-class BackgroundColors:  # Colors for the terminal
-    CYAN = "\033[96m"  # Cyan
-    GREEN = "\033[92m"  # Green
-    YELLOW = "\033[93m"  # Yellow
-    RED = "\033[91m"  # Red
-    BOLD = "\033[1m"  # Bold
-    UNDERLINE = "\033[4m"  # Underline
-    CLEAR_TERMINAL = "\033[H\033[J"  # Clear the terminal
+# Constants:
+
+FFMPEG_ERROR_FLAGS = ("-v", "error", "-xerror")  # Make FFmpeg fail on reported decode or container errors.
+FFMPEG_NULL_OUTPUT = ("-map", "0:v?", "-map", "0:a?", "-f", "null", "-")  # Decode audio and video streams and discard output without writing media.
+FFPROBE_OUTPUT_FLAGS = ("-v", "error", "-show_streams", "-show_format", "-of", "json")  # Read container and stream metadata without writing media.
 
 
-# Execution Constants:
-VERBOSE = False  # Set to True to output verbose messages
-
-# Logger Setup:
-logger = Logger(f"./Logs/{Path(__file__).stem}.log", clean=True)  # Create a Logger instance
-sys.stdout = logger  # Redirect stdout to the logger
-sys.stderr = logger  # Redirect stderr to the logger
-
-# Sound Constants:
-SOUND_COMMANDS = {
-    "Darwin": "afplay",
-    "Linux": "aplay",
-    "Windows": "start",
-}  # The commands to play a sound for each operating system
-SOUND_FILE = "./.assets/Sounds/NotificationSound.wav"  # The path to the sound file
-
-# RUN_FUNCTIONS:
-RUN_FUNCTIONS = {
-    "Play Sound": True,  # Set to True to play a sound when the program finishes
-}
-
-# Functions Definitions:
-
-
-def verbose_output(true_string="", false_string=""):
+@dataclass(frozen=True)
+class MediaIntegrityResult:
     """
-    Outputs a message if the VERBOSE constant is set to True.
-
-    :param true_string: The string to be outputted if the VERBOSE constant is set to True.
-    :param false_string: The string to be outputted if the VERBOSE constant is set to False.
-    :return: None
+    Stores one media integrity verification result.
     """
 
-    if VERBOSE and true_string != "":  # If VERBOSE is True and a true_string was provided
-        print(true_string)  # Output the true statement string
-    elif false_string != "":  # If a false_string was provided
-        print(false_string)  # Output the false statement string
+    file_path: Path  # Store verified media file path.
+    command: list[str]  # Store executed FFmpeg command arguments.
+    returncode: int  # Store FFmpeg return code or synthetic failure code.
+    stdout: str  # Store captured standard output.
+    stderr: str  # Store captured standard error.
+    success: bool  # Store whether media verification succeeded.
+    message: str = ""  # Store concise failure reason.
 
 
-def resolve_entry_with_trailing_space(current_path: str, entry: str, stripped_part: str) -> str:
+@dataclass
+class MediaIntegritySummary:
     """
-    Resolve and optionally rename a directory entry with trailing spaces.
-
-    :param current_path: Current directory path.
-    :param entry: Directory entry name.
-    :param stripped_part: Normalized target name without surrounding spaces.
-    :return: Resolved path after optional rename.
-    """
-
-    try:  # Wrap full function logic to ensure safe execution
-        resolved = os.path.join(current_path, entry)  # Build resolved path
-
-        if entry != stripped_part:  # Verify trailing spaces exist
-            corrected = os.path.join(current_path, stripped_part)  # Build corrected path
-            try:  # Attempt to rename entry
-                os.rename(resolved, corrected)  # Rename entry to stripped version
-                verbose_output(true_string=f"{BackgroundColors.GREEN}Renamed: {BackgroundColors.CYAN}{resolved}{BackgroundColors.GREEN} -> {BackgroundColors.CYAN}{corrected}{Style.RESET_ALL}")  # Log rename
-                resolved = corrected  # Update resolved path after rename
-            except Exception:  # Handle rename failure
-                verbose_output(true_string=f"{BackgroundColors.RED}Failed to rename: {BackgroundColors.CYAN}{resolved}{Style.RESET_ALL}")  # Log failure
-
-        return resolved  # Return resolved path
-    except Exception:  # Catch unexpected errors
-        return os.path.join(current_path, entry)  # Return fallback resolved path
-
-
-def resolve_full_trailing_space_path(filepath: str) -> str:
-    """
-    Resolve trailing space issues across all path components.
-
-    :param filepath: Path to resolve potential trailing space mismatches.
-    :return: Corrected full path if matches are found, otherwise original filepath.
+    Stores media integrity verification counters and results.
     """
 
-    try:  # Wrap full function logic to ensure safe execution
-        verbose_output(true_string=f"{BackgroundColors.GREEN}Resolving full trailing space path for: {BackgroundColors.CYAN}{filepath}{Style.RESET_ALL}")  # Log start
-
-        if not isinstance(filepath, str) or not filepath:  # Verify filepath validity
-            verbose_output(true_string=f"{BackgroundColors.YELLOW}Invalid filepath provided, skipping resolution.{Style.RESET_ALL}")  # Log invalid input
-            return filepath  # Return original
-
-        filepath = os.path.expanduser(filepath)  # Expand ~ to user directory
-        parts = filepath.split(os.sep)  # Split path into components
-
-        if not parts:  # Verify path parts exist
-            return filepath  # Return original
-
-        if filepath.startswith(os.sep):  # Handle absolute paths
-            current_path = os.sep  # Start from root
-            parts = parts[1:]  # Remove empty root part
-        else:
-            current_path = parts[0] if parts[0] else os.getcwd()  # Initialize base
-            parts = parts[1:] if parts[0] else parts  # Adjust parts
-
-        for part in parts:  # Iterate over each path component
-            if part == "":  # Skip empty parts
-                continue  # Continue iteration
-
-            try:  # Attempt to list current directory
-                entries = os.listdir(current_path) if os.path.isdir(current_path) else []  # List current directory entries
-            except Exception:  # Handle failure to list directory contents
-                verbose_output(true_string=f"{BackgroundColors.RED}Failed to list directory: {BackgroundColors.CYAN}{current_path}{Style.RESET_ALL}")  # Log failure
-                return filepath  # Return original
-
-            stripped_part = part.strip()  # Normalize current part
-            match_found = False  # Initialize match flag
-
-            for entry in entries:  # Iterate directory entries
-                try:  # Attempt safe comparison for each entry
-                    if entry.strip() == stripped_part:  # Compare stripped names
-                        current_path = resolve_entry_with_trailing_space(current_path, entry, stripped_part)  # Resolve entry and update current path
-                        match_found = True  # Mark match
-                        break  # Stop searching
-                except Exception:  # Handle any unexpected error during comparison
-                    continue  # Continue on error
-
-            if not match_found:  # If no match found for this segment
-                verbose_output(true_string=f"{BackgroundColors.YELLOW}No match for segment: {BackgroundColors.CYAN}{part}{Style.RESET_ALL}")  # Log miss
-                return filepath  # Return original
-
-        return current_path  # Return fully resolved path
-
-    except Exception:  # Catch unexpected errors to maintain stability
-        verbose_output(true_string=f"{BackgroundColors.RED}Error resolving full path: {BackgroundColors.CYAN}{filepath}{Style.RESET_ALL}")  # Log error
-        return filepath  # Return original
+    planned: int = 0  # Store number of files selected for verification.
+    verified: int = 0  # Store number of files successfully verified.
+    failed: int = 0  # Store number of files that failed verification.
+    results: list[MediaIntegrityResult] = field(default_factory=list)  # Store per-file verification results.
 
 
-def verify_filepath_exists(filepath):
+def collect_modified_media_files(edit_results: list[MkvpropeditResult]) -> list[Path]:
     """
-    Verify if a file or folder exists at the specified path.
+    Collect unique media files modified by successful metadata edits.
 
-    :param filepath: Path to the file or folder
-    :return: True if the file or folder exists, False otherwise
+    :param edit_results: mkvpropedit execution results from the rename workflow.
+    :return: Unique modified media file paths in workflow order.
     """
 
-    try:  # Wrap full function logic to ensure production-safe monitoring
-        verbose_output(
-            f"{BackgroundColors.GREEN}Verifying if the file or folder exists at the path: {BackgroundColors.CYAN}{filepath}{Style.RESET_ALL}"
-        )  # Output the verbose message
-        
-        if not isinstance(filepath, str) or not filepath.strip():  # Verify for non-string or empty/whitespace-only input   
-            verbose_output(true_string=f"{BackgroundColors.YELLOW}Invalid filepath provided, skipping existence verification.{Style.RESET_ALL}")  # Log invalid input
-            return False  # Return False for invalid input
-
-        if os.path.exists(filepath):  # Fast path: original input exists
-            return True  # Return True immediately
-
-        candidate = str(filepath).strip()  # Normalize input to string and strip surrounding whitespace
-
-        if (candidate.startswith("'") and candidate.endswith("'")) or (
-            candidate.startswith('"') and candidate.endswith('"')
-        ):  # Handle quoted paths from config files
-            candidate = candidate[1:-1].strip()  # Remove wrapping quotes and trim again
-
-        candidate = os.path.expanduser(candidate)  # Expand ~ to user home directory
-        candidate = os.path.normpath(candidate)  # Normalize path separators and structure
-
-        if os.path.exists(candidate):  # Verify normalized candidate directly
-            return True  # Return True if normalized path exists
-
-        repo_dir = os.path.dirname(os.path.abspath(__file__))  # Resolve repository directory
-        cwd = os.getcwd()  # Capture current working directory
-
-        alt = candidate.lstrip(os.sep) if candidate.startswith(os.sep) else candidate  # Prepare relative-safe path
-
-        repo_candidate = os.path.join(repo_dir, alt)  # Build repo-relative candidate
-        cwd_candidate = os.path.join(cwd, alt)  # Build cwd-relative candidate
-
-        for path_variant in (repo_candidate, cwd_candidate):  # Iterate alternative base paths
-            try:
-                normalized_variant = os.path.normpath(path_variant)  # Normalize variant
-                if os.path.exists(normalized_variant):  # Verify existence
-                    return True  # Return True if found
-            except Exception:
-                continue  # Continue safely on error
-
-        try:  # Attempt absolute path resolution as fallback
-            abs_candidate = os.path.abspath(candidate)  # Build absolute path
-            if os.path.exists(abs_candidate):  # Verify existence
-                return True  # Return True if found
-        except Exception:
-            pass  # Ignore resolution errors
-
-        for path_variant in (candidate, repo_candidate, cwd_candidate):  # Attempt trailing-space resolution on all variants
-            try:  # Attempt to resolve trailing space issues across path components for this variant
-                resolved = resolve_full_trailing_space_path(path_variant)  # Resolve trailing space issues across path components
-                if resolved != path_variant and os.path.exists(resolved):  # Verify resolved path exists
-                    verbose_output(
-                        f"{BackgroundColors.YELLOW}Resolved trailing space mismatch: {BackgroundColors.CYAN}{path_variant}{BackgroundColors.YELLOW} -> {BackgroundColors.CYAN}{resolved}{Style.RESET_ALL}"
-                    )  # Log successful resolution
-                    return True  # Return True if corrected path exists
-            except Exception:  # Catch any exception during trailing space resolution   
-                continue  # Continue safely on error
-
-        return False  # Not found after all resolution strategies
-    except Exception as e:  # Catch any exception to ensure logging and Telegram alert
-        print(str(e))  # Print error to terminal for server logs
-        raise  # Re-raise to preserve original failure semantics
+    modified_files: list[Path] = []  # Store unique successfully modified media paths.
+    seen_files: set[Path] = set()  # Store normalized paths already selected for verification.
+    for edit_result in edit_results:  # Iterate mkvpropedit results in workflow order.
+        normalized_path = edit_result.file_path.resolve(strict=False)  # Normalize path for stable uniqueness.
+        if not edit_result.success or edit_result.changed_count <= 0:  # Verify only successful modifying commands are selected.
+            continue  # Skip failed or no-op edit results.
+        if normalized_path in seen_files:  # Verify duplicate edit result path is not repeated.
+            continue  # Skip duplicate path.
+        modified_files.append(edit_result.file_path)  # Preserve original path object for display and subprocess use.
+        seen_files.add(normalized_path)  # Mark normalized path as selected.
+    return modified_files  # Return files that were actually modified.
 
 
-def to_seconds(obj):
+def build_ffprobe_verify_command(file_path: Path, executable: str) -> list[str]:
     """
-    Converts various time-like objects to seconds.
-    
-    :param obj: The object to convert (can be int, float, timedelta, datetime, etc.)
-    :return: The equivalent time in seconds as a float, or None if conversion fails
-    """
-    
-    if obj is None:  # None can't be converted
-        return None  # Signal failure to convert
-    if isinstance(obj, (int, float)):  # Already numeric (seconds or timestamp)
-        return float(obj)  # Return as float seconds
-    if hasattr(obj, "total_seconds"):  # Timedelta-like objects
-        try:  # Attempt to call total_seconds()
-            return float(obj.total_seconds())  # Use the total_seconds() method
-        except Exception:
-            pass  # Fallthrough on error
-    if hasattr(obj, "timestamp"):  # Datetime-like objects
-        try:  # Attempt to call timestamp()
-            return float(obj.timestamp())  # Use timestamp() to get seconds since epoch
-        except Exception:
-            pass  # Fallthrough on error
-    return None  # Couldn't convert
+    Build the read-only ffprobe verification command for one media file.
 
-
-def calculate_execution_time(start_time, finish_time=None):
-    """
-    Calculates the execution time and returns a human-readable string.
-
-    Accepts either:
-    - Two datetimes/timedeltas: `calculate_execution_time(start, finish)`
-    - A single timedelta or numeric seconds: `calculate_execution_time(delta)`
-    - Two numeric timestamps (seconds): `calculate_execution_time(start_s, finish_s)`
-
-    Returns a string like "1h 2m 3s".
+    :param file_path: Media file path.
+    :param executable: ffprobe executable path or command name.
+    :return: ffprobe command arguments.
     """
 
-    if finish_time is None:  # Single-argument mode: start_time already represents duration or seconds
-        total_seconds = to_seconds(start_time)  # Try to convert provided value to seconds
-        if total_seconds is None:  # Conversion failed
-            try:  # Attempt numeric coercion
-                total_seconds = float(start_time)  # Attempt numeric coercion
-            except Exception:
-                total_seconds = 0.0  # Fallback to zero
-    else:  # Two-argument mode: Compute difference finish_time - start_time
-        st = to_seconds(start_time)  # Convert start to seconds if possible
-        ft = to_seconds(finish_time)  # Convert finish to seconds if possible
-        if st is not None and ft is not None:  # Both converted successfully
-            total_seconds = ft - st  # Direct numeric subtraction
-        else:  # Fallback to other methods
-            try:  # Attempt to subtract (works for datetimes/timedeltas)
-                delta = finish_time - start_time  # Try subtracting (works for datetimes/timedeltas)
-                total_seconds = float(delta.total_seconds())  # Get seconds from the resulting timedelta
-            except Exception:  # Subtraction failed
-                try:  # Final attempt: Numeric coercion
-                    total_seconds = float(finish_time) - float(start_time)  # Final numeric coercion attempt
-                except Exception:  # Numeric coercion failed
-                    total_seconds = 0.0  # Fallback to zero on failure
-
-    if total_seconds is None:  # Ensure a numeric value
-        total_seconds = 0.0  # Default to zero
-    if total_seconds < 0:  # Normalize negative durations
-        total_seconds = abs(total_seconds)  # Use absolute value
-
-    days = int(total_seconds // 86400)  # Compute full days
-    hours = int((total_seconds % 86400) // 3600)  # Compute remaining hours
-    minutes = int((total_seconds % 3600) // 60)  # Compute remaining minutes
-    seconds = int(total_seconds % 60)  # Compute remaining seconds
-
-    if days > 0:  # Include days when present
-        return f"{days}d {hours}h {minutes}m {seconds}s"  # Return formatted days+hours+minutes+seconds
-    if hours > 0:  # Include hours when present
-        return f"{hours}h {minutes}m {seconds}s"  # Return formatted hours+minutes+seconds
-    if minutes > 0:  # Include minutes when present
-        return f"{minutes}m {seconds}s"  # Return formatted minutes+seconds
-    return f"{seconds}s"  # Fallback: only seconds
+    return [executable, *FFPROBE_OUTPUT_FLAGS, str(file_path)]  # Return safe read-only probe command.
 
 
-def play_sound():
+def build_ffmpeg_verify_command(file_path: Path, executable: str) -> list[str]:
     """
-    Plays a sound when the program finishes and skips if the operating system is Windows.
+    Build the read-only FFmpeg verification command for one media file.
 
-    :param: None
-    :return: None
+    :param file_path: Media file path.
+    :param executable: FFmpeg executable path or command name.
+    :return: FFmpeg command arguments.
     """
 
-    current_os = platform.system()  # Get the current operating system
-    if current_os == "Windows":  # If the current operating system is Windows
-        return  # Do nothing
-
-    if verify_filepath_exists(SOUND_FILE):  # If the sound file exists
-        if current_os in SOUND_COMMANDS:  # If the platform.system() is in the SOUND_COMMANDS dictionary
-            os.system(f"{SOUND_COMMANDS[current_os]} {SOUND_FILE}")  # Play the sound
-        else:  # If the platform.system() is not in the SOUND_COMMANDS dictionary
-            print(
-                f"{BackgroundColors.RED}The {BackgroundColors.CYAN}{current_os}{BackgroundColors.RED} is not in the {BackgroundColors.CYAN}SOUND_COMMANDS dictionary{BackgroundColors.RED}. Please add it!{Style.RESET_ALL}"
-            )
-    else:  # If the sound file does not exist
-        print(
-            f"{BackgroundColors.RED}Sound file {BackgroundColors.CYAN}{SOUND_FILE}{BackgroundColors.RED} not found. Make sure the file exists.{Style.RESET_ALL}"
-        )
+    return [executable, *FFMPEG_ERROR_FLAGS, "-i", str(file_path), *FFMPEG_NULL_OUTPUT]  # Return safe read-only decode command.
 
 
-def main():
+def verify_media_file(file_path: Path, executable: str | None = None) -> MediaIntegrityResult:
     """
-    Main function.
+    Verify one media file through read-only FFmpeg decoding.
 
-    :param: None
-    :return: None
+    :param file_path: Media file path.
+    :param executable: Optional FFmpeg executable path.
+    :return: Media integrity verification result.
     """
 
-    print(
-        f"{BackgroundColors.CLEAR_TERMINAL}{BackgroundColors.BOLD}{BackgroundColors.GREEN}Welcome to the {BackgroundColors.CYAN}Main Template Python{BackgroundColors.GREEN} program!{Style.RESET_ALL}",
-        end="\n\n",
-    )  # Output the welcome message
-    
-    start_time = datetime.datetime.now()  # Get the start time of the program
-    
-    # Implement logic here
+    command_executable = executable or find_executable("ffmpeg")  # Locate FFmpeg using project executable discovery.
+    probe_executable = find_executable("ffprobe") if executable is None else "ffprobe"  # Locate ffprobe unless caller injected a test executable.
+    if command_executable is None:  # Verify FFmpeg is available.
+        return MediaIntegrityResult(file_path, ["ffmpeg", str(file_path)], 127, "", "ffmpeg not found", False, "ffmpeg not found")  # Return explicit missing-tool failure.
+    if probe_executable is None:  # Verify ffprobe is available.
+        return MediaIntegrityResult(file_path, ["ffprobe", str(file_path)], 127, "", "ffprobe not found", False, "ffprobe not found")  # Return explicit missing-tool failure.
+    if not file_path.exists():  # Verify media file still exists.
+        return MediaIntegrityResult(file_path, [command_executable, str(file_path)], 2, "", "media file not found", False, "media file not found")  # Return explicit missing-file failure.
+    if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:  # Verify project-supported Matroska extension.
+        return MediaIntegrityResult(file_path, [command_executable, str(file_path)], 2, "", "unsupported media extension", False, "unsupported media extension")  # Return explicit unsupported-file failure.
 
-    finish_time = datetime.datetime.now()  # Get the finish time of the program
-    
-    print(
-        f"{BackgroundColors.GREEN}Start time: {BackgroundColors.CYAN}{start_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Finish time: {BackgroundColors.CYAN}{finish_time.strftime('%d/%m/%Y - %H:%M:%S')}\n{BackgroundColors.GREEN}Execution time: {BackgroundColors.CYAN}{calculate_execution_time(start_time, finish_time)}{Style.RESET_ALL}"
-    )  # Output the start and finish times
-    
-    print(
-        f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Program finished.{Style.RESET_ALL}"
-    )  # Output the end of the program message
-    
-    (
-        atexit.register(play_sound) if RUN_FUNCTIONS["Play Sound"] else None
-    )  # Register the play_sound function to be called when the program finishes
+    try:  # Read file size before invoking FFmpeg.
+        if file_path.stat().st_size == 0:  # Verify media file is not empty.
+            return MediaIntegrityResult(file_path, [command_executable, str(file_path)], 2, "", "empty media file (0 bytes)", False, "empty media file (0 bytes)")  # Return explicit empty-file failure.
+    except OSError as error:  # Handle unreadable filesystem metadata.
+        return MediaIntegrityResult(file_path, [command_executable, str(file_path)], 2, "", str(error), False, str(error))  # Return explicit stat failure.
+
+    probe_command = build_ffprobe_verify_command(file_path, probe_executable)  # Build read-only ffprobe command.
+    try:  # Execute ffprobe verification.
+        probe_result = subprocess.run(probe_command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)  # Run ffprobe without shell expansion.
+    except OSError as error:  # Handle probe execution failure.
+        return MediaIntegrityResult(file_path, probe_command, 126, "", str(error), False, str(error))  # Return probe execution failure.
+
+    if probe_result.returncode != 0:  # Verify ffprobe succeeded.
+        probe_failure_text = (probe_result.stderr or probe_result.stdout).strip()  # Capture ffprobe diagnostic text.
+        return MediaIntegrityResult(file_path, probe_command, probe_result.returncode, probe_result.stdout or "", probe_result.stderr or "", False, probe_failure_text)  # Return probe failure.
+
+    command = build_ffmpeg_verify_command(file_path, command_executable)  # Build read-only FFmpeg command.
+    try:  # Execute FFmpeg verification.
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)  # Run FFmpeg without shell expansion.
+    except OSError as error:  # Handle command execution failure.
+        return MediaIntegrityResult(file_path, command, 126, "", str(error), False, str(error))  # Return execution failure.
+
+    failure_text = (result.stderr or result.stdout).strip()  # Capture FFmpeg diagnostic text.
+    success = result.returncode == 0  # Resolve success only from zero return code.
+    return MediaIntegrityResult(file_path, command, result.returncode, result.stdout or "", result.stderr or "", success, failure_text)  # Return verification result.
 
 
-if __name__ == "__main__":
+def build_integrity_progress_status(file_path: Path, result: MediaIntegrityResult | None) -> str:
     """
-    This is the standard boilerplate that calls the main() function.
+    Build one concise in-place status for the current verified file.
 
-    :return: None
+    :param file_path: Current media file path.
+    :param result: Verification result when available.
+    :return: Short status text for the progress bar.
     """
 
-    main()  # Call the main function
+    cyan_name = f"{BackgroundColors.CYAN}{file_path.name}{BackgroundColors.GREEN}"  # Keep the current file name cyan inside the green progress bar message.
+    if result is None:  # Verify no command result is available yet.
+        return f"Verifying: {cyan_name}"  # Return active verification status.
+    if result.success:  # Verify FFmpeg completed successfully.
+        return f"Verified: {cyan_name}"  # Return success status.
+    return f"Verification failed: {cyan_name}"  # Return failure status.
+
+
+def print_integrity_summary(summary: MediaIntegritySummary) -> None:
+    """
+    Print final media integrity verification summary.
+
+    :param summary: Media integrity verification summary.
+    :return: None.
+    """
+
+    summary_text = f"planned={summary.planned}, verified={summary.verified}, failed={summary.failed}"  # Build summary values.
+    summary_color = BackgroundColors.GREEN if summary.failed == 0 else BackgroundColors.RED  # Pick severity color for summary label.
+    print(f"\n{summary_color}Integrity verification summary:{BackgroundColors.CYAN} {summary_text}{BackgroundColors.RESET_ALL}")  # Print colored summary.
+    for result in summary.results:  # Iterate verification results.
+        if result.success:  # Verify only failures need standalone detail lines.
+            continue  # Skip successful files in final detail output.
+        detail = result.message if result.message != "" else f"ffmpeg returned {result.returncode}"  # Build concise failure detail.
+        print(f"{BackgroundColors.RED}Integrity verification failed for{BackgroundColors.RESET_ALL}: {BackgroundColors.CYAN}{result.file_path}: {detail}{BackgroundColors.RESET_ALL}")  # Print failure detail after progress bar closes.
+
+
+def verify_media_files(file_paths: list[Path]) -> MediaIntegritySummary:
+    """
+    Verify media files and report colored progress.
+
+    :param file_paths: Media files to verify.
+    :return: Media integrity verification summary.
+    """
+
+    summary = MediaIntegritySummary(planned=len(file_paths))  # Initialize verification summary.
+    executable = find_executable("ffmpeg")  # Locate FFmpeg once for the whole batch.
+    with tqdm(file_paths, desc=f"{BackgroundColors.GREEN}Verifying media integrity", unit="file", colour="green", bar_format=PROGRESS_BAR_FORMAT) as progress_bar:  # Build cleanup-managed progress bar.
+        for file_path in progress_bar:  # Iterate selected media files.
+            progress_bar.set_description(f"{BackgroundColors.GREEN}{build_integrity_progress_status(file_path, None)}{BackgroundColors.GREEN}")  # Render active status.
+            result = verify_media_file(file_path, executable)  # Verify one media file.
+            summary.results.append(result)  # Store per-file result.
+            if result.success:  # Verify media integrity succeeded.
+                summary.verified += 1  # Count successful verification.
+            else:  # Handle media integrity failure.
+                summary.failed += 1  # Count failed verification.
+            progress_bar.set_description(f"{BackgroundColors.GREEN}{build_integrity_progress_status(file_path, result)}{BackgroundColors.GREEN}")  # Render final per-file status.
+
+    print_integrity_summary(summary)  # Print final verification summary after progress bar closes.
+    return summary  # Return verification summary.
+
+
+def verify_mkvpropedit_results(edit_results: list[MkvpropeditResult]) -> MediaIntegritySummary:
+    """
+    Verify media files changed by successful mkvpropedit operations.
+
+    :param edit_results: mkvpropedit execution results from the rename workflow.
+    :return: Media integrity verification summary.
+    """
+
+    modified_files = collect_modified_media_files(edit_results)  # Collect exactly modified files from successful edit results.
+    if not modified_files:  # Verify whether any modified files require verification.
+        summary = MediaIntegritySummary()  # Build empty verification summary.
+        print_integrity_summary(summary)  # Report explicit empty verification summary.
+        return summary  # Return empty verification summary.
+    return verify_media_files(modified_files)  # Verify modified media files.
+
+
+def main() -> None:
+    """
+    Run standalone media integrity verification for paths passed on the command line.
+
+    :return: None.
+    """
+
+    import sys  # Import CLI arguments only for standalone execution.
+
+    file_paths = [Path(argument) for argument in sys.argv[1:]]  # Convert CLI arguments into media paths.
+    summary = verify_media_files(file_paths)  # Verify requested media files.
+    sys.exit(1 if summary.failed > 0 else 0)  # Return nonzero when verification fails.
+
+
+if __name__ == "__main__":  # Run script entry point when executed directly.
+    main()  # Execute standalone verification workflow.

@@ -470,7 +470,7 @@ Same workflow with only `INPUT_DIR` required:
 make process-all-defaults INPUT_DIR="E:/Movies/"
 ```
 
-This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, and applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` edits for each MKV in one `mkvpropedit` invocation.
+This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` edits for each MKV in one `mkvpropedit` invocation, then verifies every successfully modified media file with read-only FFmpeg decoding.
 
 When subtitles are not selected, subtitle reports are not generated, subtitle content is not extracted, and subtitle track names are not changed.
 
@@ -557,6 +557,7 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 - [report.py](report.py): Recursively inspects supported Matroska files under `INPUT_DIR`, detects audio languages, preserves manual report values, and writes prefixed audio reports under `Reports/` safely.
 - [subtitle_report.py](subtitle_report.py): Generates prefixed subtitle reports under `Reports/` for embedded subtitle tracks.
 - [track_metadata_renamer.py](track_metadata_renamer.py): Reads prefixed audio reports and optional prefixed subtitle reports, resolves audio/subtitle target names, resolves optional default audio/subtitle flag changes, resolves video target names from filename stems, validates current file metadata, writes prefixed unresolved audio reports under `Reports/`, and applies metadata edits.
+- [media_integrity_verifier.py](media_integrity_verifier.py): Verifies successfully modified Matroska files after metadata edits with read-only FFmpeg decoding and fails the workflow if corruption or unreadable media is detected.
 - [auto_track_metadata_renamer.py](auto_track_metadata_renamer.py): Runs the complete selected report-and-rename workflow.
 - [subtitle_tracks_renamer.py](subtitle_tracks_renamer.py): Applies embedded subtitle-track renames from the selected subtitle report only.
 - [audio_language_detector.py](audio_language_detector.py): Resolves language from metadata first, then uses distributed temporary audio samples with Whisper only when needed.
@@ -587,6 +588,7 @@ The implementation skips files or tracks safely when:
 - The current track name, track ID, or Track UID no longer matches the report.
 - `ffprobe`, `mkvmerge`, `ffmpeg`, or `mkvpropedit` is unavailable.
 - `mkvpropedit` returns an error for one file.
+- Post-edit FFmpeg integrity verification fails, cannot run, or finds an unreadable, corrupt, empty, missing, or unsupported modified file.
 
 When default-audio selection is enabled, unsupported language names fail at CLI parsing. `--default-audio-language` also requires `--audio`.
 
