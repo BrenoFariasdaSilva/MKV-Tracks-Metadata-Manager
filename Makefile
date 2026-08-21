@@ -52,6 +52,8 @@ ifeq ($(origin RUN_ID), undefined)
 RUN_ID := $(shell $(PYTHON_CMD) -c "import os; print(os.getpid())")
 endif
 COMMON_CLI_ARGS :=
+ENABLE_COMPLETION_SOUND := --enable-completion-sound
+DISABLE_COMPLETION_SOUND := --disable-completion-sound
 ifneq ($(strip $(INPUT_DIR)),)
 COMMON_CLI_ARGS += --input-dir "$(INPUT_DIR)"
 endif
@@ -132,13 +134,13 @@ run: rename
 reports: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(call RUN_AND_LOG, ./report.py --audio --subtitles $(CLI_ARGS))
+	$(call RUN_AND_LOG, ./report.py --audio --subtitles $(CLI_ARGS) $(ENABLE_COMPLETION_SOUND))
 
 process: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(PYTHON) ./report.py $(PROCESS_REPORT_CLI_ARGS)
-	$(PYTHON) ./track_metadata_renamer.py $(PROCESS_RENAME_CLI_ARGS)
+	$(PYTHON) ./report.py $(PROCESS_REPORT_CLI_ARGS) $(DISABLE_COMPLETION_SOUND)
+	$(PYTHON) ./track_metadata_renamer.py $(PROCESS_RENAME_CLI_ARGS) $(ENABLE_COMPLETION_SOUND)
 
 auto: process
 
@@ -154,22 +156,22 @@ process-all-defaults:
 report: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(call RUN_AND_LOG, ./report.py $(CLI_ARGS))
+	$(call RUN_AND_LOG, ./report.py $(CLI_ARGS) $(ENABLE_COMPLETION_SOUND))
 
 subtitle_report: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(call RUN_AND_LOG, ./report.py --subtitles $(CLI_ARGS))
+	$(call RUN_AND_LOG, ./report.py --subtitles $(CLI_ARGS) $(ENABLE_COMPLETION_SOUND))
 
 rename: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(call RUN_AND_LOG, ./track_metadata_renamer.py $(RENAME_TARGET_CLI_ARGS))
+	$(call RUN_AND_LOG, ./track_metadata_renamer.py $(RENAME_TARGET_CLI_ARGS) $(ENABLE_COMPLETION_SOUND))
 
 rename_subtitles: dependencies
 	$(ENSURE_LOG_DIR)
 	$(CLEAR_CMD)
-	$(call RUN_AND_LOG, ./track_metadata_renamer.py --subtitles $(RENAME_TARGET_CLI_ARGS))
+	$(call RUN_AND_LOG, ./track_metadata_renamer.py --subtitles $(RENAME_TARGET_CLI_ARGS) $(ENABLE_COMPLETION_SOUND))
 
 # Create virtual environment if missing
 $(VENV):
