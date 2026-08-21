@@ -72,6 +72,7 @@ from audio_language_detector import detect_audio_track_language, normalize_langu
 from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
 from subtitle_language_detector import detect_subtitle_track_language  # Resolve metadata or text subtitle language.
+from utils.completion_sound import add_completion_sound_arguments, read_completion_sound_argument, register_completion_sound  # Reuse shared completion-sound CLI and late registration.
 from utils.utils import calculate_execution_time, BackgroundColors  # Track and display execution time.
 
 # Constants:
@@ -1243,6 +1244,7 @@ def build_report_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--subtitle-report", default=None, help="Subtitle report output path; defaults to Reports/<input-prefix>-subtitles_report.json.")  # Add subtitle report path option.
     parser.add_argument("--file", default=None, help="Exact relative or absolute MKV file under input directory.")  # Add single-file option.
     parser.add_argument("--run-id", default=None, help="Internal workflow run identifier for process-scoped reports.")  # Add process-scoped artifact option.
+    add_completion_sound_arguments(parser)  # Add shared completion-sound override flags.
     return parser  # Return configured parser.
 
 
@@ -1281,6 +1283,7 @@ def main() -> None:
     :return: None.
     """
 
+    completion_sound_enabled = read_completion_sound_argument(sys.argv[1:])  # Resolve late completion-sound ownership from raw CLI flags.
     logger = Logger(str(build_log_path(Path(__file__), read_input_dir_argument(sys.argv[1:]), read_run_id_argument(sys.argv[1:]))), clean=True)  # Create input-specific log mirror.
     sys.stdout = logger  # Mirror standard output to terminal and log file.
     sys.stderr = logger  # Mirror standard error to terminal and log file.
@@ -1303,6 +1306,8 @@ def main() -> None:
     print(
         f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Program finished.{BackgroundColors.RESET_ALL}"
     )  # Output the end of the program message
+
+    register_completion_sound(completion_sound_enabled)  # Register shared completion sound only after CLI resolution and normal workflow finish.
     
     sys.exit(status)  # Run CLI and return process status.
 

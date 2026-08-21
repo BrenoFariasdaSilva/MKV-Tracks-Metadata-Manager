@@ -70,6 +70,7 @@ from Logger import Logger  # Mirror terminal output to a log file.
 from media_integrity_verifier import verify_mkvpropedit_results  # Verify modified media after successful metadata edits.
 from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, acquire_media_edit_lock, apply_track_metadata_edits, build_track_selector, release_media_edit_lock, valid_target_name  # Apply mkvpropedit edits.
 from report import AUDIO_REPORT_FILENAME, INPUT_DIR, PROGRESS_BAR_FORMAT, SUBTITLE_REPORT_FILENAME, SUBTITLE_REPORT_PATH, SUPPORTED_EXTENSIONS, UNRESOLVED_AUDIO_REPORT_FILENAME, AudioTrackRecord, BackgroundColors, build_audio_report_data, build_log_path, build_subtitle_detected_name, discover_supported_files, format_colored_status, generate_audio_report, generate_subtitle_report, parse_group_key, parse_occurrence_key, parse_subtitle_detected_name, parse_subtitle_occurrence_key, raw_subtitle_track_name, raw_track_name, read_audio_tracks, read_existing_desired_names, read_input_dir_argument, read_run_id_argument, read_subtitle_tracks, read_video_tracks, resolve_report_path, resolve_selected_file, write_report  # Reuse report parsing and metadata inspection.
+from utils.completion_sound import add_completion_sound_arguments, read_completion_sound_argument, register_completion_sound  # Reuse shared completion-sound CLI and late registration.
 from utils.utils import calculate_execution_time  # Track and display execution time.
 
 
@@ -1336,6 +1337,7 @@ def add_path_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--unresolved-audio-report", default=None, help="Audio report path for skipped or failed audio occurrences; defaults to Reports/<input-prefix>-audio_unresolved_report.json.")  # Add unresolved audio report path option.
     parser.add_argument("--file", default=None, help="Exact relative or absolute MKV file under input directory.")  # Add single-file option.
     parser.add_argument("--run-id", default=None, help="Internal workflow run identifier for process-scoped reports.")  # Add process-scoped artifact option.
+    add_completion_sound_arguments(parser)  # Add shared completion-sound override flags.
 
 
 def read_track_selection(parsed_args: argparse.Namespace, include_video: bool) -> TrackSelection:
@@ -1561,6 +1563,7 @@ def main() -> None:
     :return: None.
     """
 
+    completion_sound_enabled = read_completion_sound_argument(sys.argv[1:])  # Resolve late completion-sound ownership from raw CLI flags.
     logger = Logger(str(build_log_path(Path(__file__), read_input_dir_argument(sys.argv[1:]), read_run_id_argument(sys.argv[1:]))), clean=True)  # Create input-specific log mirror.
     sys.stdout = logger  # Mirror standard output to terminal and log file.
     sys.stderr = logger  # Mirror standard error to terminal and log file.
@@ -1583,6 +1586,8 @@ def main() -> None:
     print(
         f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Program finished.{BackgroundColors.RESET_ALL}"
     )  # Output the end of the program message
+
+    register_completion_sound(completion_sound_enabled)  # Register shared completion sound only after CLI resolution and normal workflow finish.
     
     sys.exit(status)  # Run CLI and return process status.
 

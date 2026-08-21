@@ -59,6 +59,7 @@ from pathlib import Path  # Build project-local log paths.
 
 from Logger import Logger  # Mirror terminal output to a log file.
 from report import INPUT_DIR, build_log_path, read_input_dir_argument, read_run_id_argument, run_report_cli  # Reuse report generation CLI and log naming.
+from utils.completion_sound import read_completion_sound_argument, register_completion_sound  # Reuse shared completion-sound flag reading and late registration.
 from utils.utils import calculate_execution_time, BackgroundColors  # Track and display execution time.
 
 
@@ -69,6 +70,7 @@ def main() -> None:
     :return: None.
     """
 
+    completion_sound_enabled = read_completion_sound_argument(sys.argv[1:])  # Resolve late completion-sound ownership from raw CLI flags.
     logger = Logger(str(build_log_path(Path(__file__), read_input_dir_argument(sys.argv[1:], INPUT_DIR), read_run_id_argument(sys.argv[1:]))), clean=True)  # Create input-specific log mirror.
     sys.stdout = logger  # Mirror standard output to terminal and log file.
     sys.stderr = logger  # Mirror standard error to terminal and log file.
@@ -91,6 +93,8 @@ def main() -> None:
     print(
         f"{BackgroundColors.BOLD}{BackgroundColors.GREEN}Program finished.{BackgroundColors.RESET_ALL}"
     )  # Output the end of the program message
+
+    register_completion_sound(completion_sound_enabled)  # Register shared completion sound only after CLI resolution and normal workflow finish.
     
     sys.exit(status)  # Run subtitle report workflow.
 

@@ -45,6 +45,7 @@ Assumptions & Notes:
 
 from __future__ import annotations  # Enable modern annotations on supported Python versions.
 
+import argparse  # Parse standalone media-verification CLI flags.
 from dataclasses import dataclass, field  # Define typed verification records.
 from pathlib import Path  # Represent media file paths.
 import subprocess  # Run FFmpeg safely with argument lists.
@@ -52,6 +53,7 @@ from tqdm import tqdm  # Display verification progress without flooding the term
 
 from mkvpropedit_wrapper import MkvpropeditResult, find_executable  # Reuse project executable discovery and edit results.
 from report import PROGRESS_BAR_FORMAT, SUPPORTED_EXTENSIONS, BackgroundColors  # Reuse media scope and terminal colors.
+from utils.completion_sound import add_completion_sound_arguments, resolve_completion_sound_enabled, register_completion_sound  # Reuse shared completion-sound CLI and late registration.
 
 
 # Constants:
@@ -256,6 +258,19 @@ def verify_mkvpropedit_results(edit_results: list[MkvpropeditResult]) -> MediaIn
     return verify_media_files(modified_files)  # Verify modified media files.
 
 
+def build_verify_argument_parser() -> argparse.ArgumentParser:
+    """
+    Build standalone media-verification argument parser.
+
+    :return: Argument parser.
+    """
+
+    parser = argparse.ArgumentParser(description="Verify Matroska media integrity for one or more files.")  # Create standalone media-verification parser.
+    parser.add_argument("files", nargs="*", help="Matroska file paths to verify.")  # Add positional media-file arguments.
+    add_completion_sound_arguments(parser)  # Add shared completion-sound override flags.
+    return parser  # Return configured parser.
+
+
 def main() -> None:
     """
     Run standalone media integrity verification for paths passed on the command line.
@@ -265,9 +280,12 @@ def main() -> None:
 
     import sys  # Import CLI arguments only for standalone execution.
 
-    file_paths = [Path(argument) for argument in sys.argv[1:]]  # Convert CLI arguments into media paths.
-    summary = verify_media_files(file_paths)  # Verify requested media files.
-    sys.exit(1 if summary.failed > 0 else 0)  # Return nonzero when verification fails.
+    parser = build_verify_argument_parser()  # Build standalone media-verification parser for sound ownership resolution.
+    parsed_args = parser.parse_args(sys.argv[1:])  # Parse standalone media-verification arguments once in main.
+    summary = verify_media_files([Path(file_path) for file_path in parsed_args.files])  # Verify requested media files from parsed positional paths.
+    status = 1 if summary.failed > 0 else 0  # Resolve standalone media-verification exit status from summary.
+    register_completion_sound(resolve_completion_sound_enabled(parsed_args.completion_sound))  # Register shared completion sound only after CLI resolution and normal workflow finish.
+    sys.exit(status)  # Return nonzero when verification fails.
 
 
 if __name__ == "__main__":  # Run script entry point when executed directly.
