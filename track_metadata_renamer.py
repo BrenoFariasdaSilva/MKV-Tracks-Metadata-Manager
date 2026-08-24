@@ -137,22 +137,16 @@ def subtitle_language_matches(requested_language: str, detected_language: str) -
     """
     Verify whether one detected subtitle language satisfies the requested default language.
 
-    A request for generic Portuguese should accept both Portugal Portuguese and
-    Brazilian Portuguese, while a request for Brazilian Portuguese must remain
-    specific so the caller can still target PT-BR explicitly when needed.
+    Subtitle default selection must stay precise for region-sensitive languages
+    such as Portuguese variants, otherwise PT-PT can be selected when PT-BR was
+    explicitly requested.
 
     :param requested_language: Requested canonical subtitle language.
     :param detected_language: Detected canonical subtitle language.
     :return: True when the detected subtitle language matches the requested target.
     """
 
-    if requested_language == detected_language:  # Prefer exact canonical matches first.
-        return True  # Return direct match immediately.
-    if requested_language == "Portuguese" and detected_language == "Brazilian Portuguese":  # Treat PT-PT/generic Portuguese requests as satisfied by PT-BR subtitles too.
-        return True  # Return Portuguese-family match.
-    if requested_language == "Brazilian Portuguese" and detected_language == "Portuguese":  # Treat PT-BR requests as satisfied by generic Portuguese metadata when region-specific tagging is unavailable.
-        return True  # Return Portuguese-family fallback match.
-    return False  # Return mismatch for all other language pairs.
+    return requested_language == detected_language  # Require exact canonical subtitle-language matches.
 
 
 def same_subtitle_language_family(language_a: str, language_b: str) -> bool:

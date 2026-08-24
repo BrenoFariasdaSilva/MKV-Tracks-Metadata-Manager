@@ -59,7 +59,7 @@ import subprocess  # Extract embedded subtitle tracks with mkvextract.
 import tempfile  # Own temporary extraction directories.
 from typing import Any  # Type dynamic subtitle metadata and detector data.
 
-from audio_language_detector import SAMPLE_FRACTIONS, detect_language_from_metadata, normalize_subtitle_language_value, normalize_text  # Reuse metadata detection and subtitle-aware language normalization.
+from audio_language_detector import SAMPLE_FRACTIONS, metadata_language_values, normalize_subtitle_language_value, normalize_text  # Reuse metadata collection and subtitle-aware language normalization.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
 
 
@@ -310,7 +310,7 @@ def detect_language_from_text(value: str) -> str:
     normalized_language = normalize_subtitle_language_value(str(best_detection.lang))  # Normalize the generic detector result first.
     if normalized_language == "Portuguese":  # Run PT-BR vs PT-PT heuristics only for Portuguese subtitle text.
         classified_portuguese = classify_portuguese_subtitle_variant(value)  # Refine generic Portuguese into a regional subtitle label when possible.
-        if classified_portuguese != "":  # Verify the subtitle text contains enough regional evidence.
+        if classified_portuguese != "Portuguese":  # Upgrade only when subtitle text actually proves a more specific regional variant.
             return classified_portuguese  # Return region-specific Portuguese label.
     return normalized_language  # Return canonical subtitle language name.
 
@@ -343,6 +343,21 @@ def classify_portuguese_subtitle_variant(value: str) -> str:
     if european_score >= PORTUGUESE_REGION_MIN_SCORE and european_score >= brazilian_score + PORTUGUESE_REGION_SCORE_MARGIN:  # Require a clear PT-PT winner.
         return "Portuguese"  # Return canonical PT-PT label.
     return "Portuguese"  # Fall back to generic Portuguese when evidence is mixed or weak.
+
+
+def detect_subtitle_language_from_metadata(stream: dict[str, Any]) -> str:
+    """
+    Detect subtitle language from metadata using subtitle-aware normalization.
+
+    :param stream: Subtitle metadata object.
+    :return: Canonical subtitle language name or empty text.
+    """
+
+    for value in metadata_language_values(stream):  # Iterate metadata values by reliability.
+        language_name = normalize_subtitle_language_value(value)  # Resolve candidate metadata through subtitle-aware aliases.
+        if language_name != "":  # Verify a subtitle language was detected.
+            return language_name  # Return subtitle metadata language.
+    return ""  # Return unknown subtitle language.
 
 
 def aggregate_region_languages(region_languages: list[str]) -> str:
@@ -397,11 +412,14 @@ def detect_subtitle_track_language(file_path: Path, stream: dict[str, Any], trac
     :return: Canonical language name or empty text.
     """
 
-    metadata_language = detect_language_from_metadata(stream)  # Prefer reliable metadata.
-    if metadata_language != "":  # Verify metadata resolved a language.
-        return metadata_language  # Return metadata language.
+    metadata_language = detect_subtitle_language_from_metadata(stream)  # Prefer subtitle-aware metadata normalization first.
+    if metadata_language != "" and metadata_language != "Portuguese":  # Keep precise non-Portuguese and explicit PT-BR metadata results.
+        return metadata_language  # Return sufficiently specific metadata language.
     if track_id is None:  # Verify content extraction can target the exact track.
-        return ""  # Return unknown without targetable track ID.
+        return metadata_language  # Return best metadata language when content cannot be inspected.
     if not subtitle_codec_is_text(codec_id, codec_name):  # Verify subtitle codec contains directly readable text.
-        return ""  # Return unknown for image-based subtitle content.
-    return detect_language_from_subtitle_content(file_path, track_id, duration_seconds)  # Return content-based language.
+        return metadata_language  # Return best metadata language for image-based subtitle content.
+    content_language = detect_language_from_subtitle_content(file_path, track_id, duration_seconds)  # Detect subtitle language from actual text when possible.
+    if content_language != "":  # Prefer content-based language when extraction succeeded.
+        return content_language  # Return text-derived subtitle language.
+    return metadata_language  # Fall back to metadata language when content detection is unavailable or inconclusive.
