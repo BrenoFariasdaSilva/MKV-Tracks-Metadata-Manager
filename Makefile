@@ -116,7 +116,7 @@ help:
 	@echo "  make rename ARGS=\"--video --audio\" or ARGS=\"--subtitles\""
 	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio\""
 	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio --default-audio-language English\""
-	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --default-subtitle-language Portuguese\""
+	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --default-subtitle-language \"\"Brazilian Portuguese\"\"\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --disable-forced-subtitles\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --disable-default-subtitles\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles\""
@@ -151,7 +151,7 @@ process-all:
 	$(MAKE) process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles"
 
 process-all-defaults:
-	$(MAKE) process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --default-audio-language English --default-subtitle-language Portuguese --disable-forced-subtitles"
+	$(MAKE) process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --default-audio-language English --default-subtitle-language \"Brazilian Portuguese\" --disable-forced-subtitles"
 
 report: dependencies
 	$(ENSURE_LOG_DIR)
