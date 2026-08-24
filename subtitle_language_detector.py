@@ -59,7 +59,7 @@ import subprocess  # Extract embedded subtitle tracks with mkvextract.
 import tempfile  # Own temporary extraction directories.
 from typing import Any  # Type dynamic subtitle metadata and detector data.
 
-from audio_language_detector import SAMPLE_FRACTIONS, detect_language_from_metadata, normalize_subtitle_language_value  # Reuse metadata detection and subtitle-aware language normalization.
+from audio_language_detector import SAMPLE_FRACTIONS, detect_language_from_metadata, normalize_subtitle_language_value, normalize_text  # Reuse metadata detection and subtitle-aware language normalization.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
 
 
@@ -70,6 +70,49 @@ MIN_LANGUAGE_PROBABILITY = 0.85  # Require strong text detector confidence.
 MIN_WINNING_RATIO = 0.67  # Require conservative regional agreement.
 TEXT_SUBTITLE_CODEC_PREFIXES = ("S_TEXT/",)  # Identify text subtitle codecs from Matroska codec IDs.
 TEXT_SUBTITLE_CODEC_NAMES = ("SubRip", "SubStationAlpha", "WebVTT")  # Identify text subtitle codecs from MKVToolNix names.
+PORTUGUESE_REGION_MIN_SCORE = 2  # Require at least two strong regional hits before trusting PT-BR/PT-PT classification.
+PORTUGUESE_REGION_SCORE_MARGIN = 2  # Require a clear winner between Brazilian and European Portuguese markers.
+
+BRAZILIAN_PORTUGUESE_MARKERS = {
+    "voce",
+    "voces",
+    "voces vao",
+    "voce vai",
+    "pra",
+    "pro",
+    "para a gente",
+    "a gente",
+    "cara",
+    "tchau",
+    "legal",
+    "onibus",
+    "trem",
+    "celular",
+    "camiseta",
+    "banheiro",
+    "suco",
+    "fazenda",
+}
+
+EUROPEAN_PORTUGUESE_MARKERS = {
+    "tu",
+    "estas",
+    "estavas",
+    "fixe",
+    "giro",
+    "autocarro",
+    "comboio",
+    "telemovel",
+    "t shirt",
+    "casa de banho",
+    "sumo",
+    "miudo",
+    "miuda",
+    "rapariga",
+    "rapaz",
+    "adeus",
+    "pois",
+}
 
 
 def subtitle_codec_is_text(codec_id: str, codec_name: str) -> bool:
@@ -264,7 +307,42 @@ def detect_language_from_text(value: str) -> str:
     best_detection = detections[0]  # Read strongest language candidate.
     if float(best_detection.prob) < MIN_LANGUAGE_PROBABILITY:  # Verify strong confidence.
         return ""  # Return unknown when confidence is weak.
-    return normalize_subtitle_language_value(str(best_detection.lang))  # Return canonical subtitle language name.
+    normalized_language = normalize_subtitle_language_value(str(best_detection.lang))  # Normalize the generic detector result first.
+    if normalized_language == "Portuguese":  # Run PT-BR vs PT-PT heuristics only for Portuguese subtitle text.
+        classified_portuguese = classify_portuguese_subtitle_variant(value)  # Refine generic Portuguese into a regional subtitle label when possible.
+        if classified_portuguese != "":  # Verify the subtitle text contains enough regional evidence.
+            return classified_portuguese  # Return region-specific Portuguese label.
+    return normalized_language  # Return canonical subtitle language name.
+
+
+def count_region_marker_hits(normalized_text: str, markers: set[str]) -> int:
+    """
+    Count conservative region-marker hits inside normalized subtitle text.
+
+    :param normalized_text: Accent-stripped normalized subtitle text.
+    :param markers: Region-specific lexical markers.
+    :return: Number of distinct region-marker hits.
+    """
+
+    return sum(1 for marker in markers if marker in normalized_text)  # Count distinct lexical matches only once per marker.
+
+
+def classify_portuguese_subtitle_variant(value: str) -> str:
+    """
+    Distinguish Brazilian Portuguese from European Portuguese subtitle text.
+
+    :param value: Subtitle text region.
+    :return: Canonical Portuguese variant or generic Portuguese when uncertain.
+    """
+
+    normalized_text = " " + normalize_text(value) + " "  # Normalize accents and whitespace so Portuguese region markers match reliably.
+    brazilian_score = count_region_marker_hits(normalized_text, BRAZILIAN_PORTUGUESE_MARKERS)  # Count PT-BR lexical evidence.
+    european_score = count_region_marker_hits(normalized_text, EUROPEAN_PORTUGUESE_MARKERS)  # Count PT-PT lexical evidence.
+    if brazilian_score >= PORTUGUESE_REGION_MIN_SCORE and brazilian_score >= european_score + PORTUGUESE_REGION_SCORE_MARGIN:  # Require a clear PT-BR winner.
+        return "Brazilian Portuguese"  # Return canonical PT-BR label.
+    if european_score >= PORTUGUESE_REGION_MIN_SCORE and european_score >= brazilian_score + PORTUGUESE_REGION_SCORE_MARGIN:  # Require a clear PT-PT winner.
+        return "Portuguese"  # Return canonical PT-PT label.
+    return "Portuguese"  # Fall back to generic Portuguese when evidence is mixed or weak.
 
 
 def aggregate_region_languages(region_languages: list[str]) -> str:
