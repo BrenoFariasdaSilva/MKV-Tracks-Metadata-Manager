@@ -68,7 +68,7 @@ import tempfile  # Create temporary files for safe report writes.
 from typing import Any  # Type dynamic ffprobe JSON values.
 from tqdm import tqdm  # Display report-generation progress.
 
-from audio_language_detector import detect_audio_track_language, normalize_language_value, normalize_text  # Resolve metadata or sampled audio language.
+from audio_language_detector import detect_audio_track_language, normalize_language_value, normalize_subtitle_language_value, normalize_text  # Resolve metadata or sampled audio language, plus subtitle-specific normalization.
 from Logger import Logger  # Mirror terminal output to a log file.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
 from subtitle_language_detector import detect_subtitle_track_language  # Resolve metadata or text subtitle language.
@@ -376,7 +376,7 @@ def parse_subtitle_detected_name(value: object) -> tuple[str, str]:
             detected_language_text = normalized_value[len(prefix):]  # Remove type prefix for language parsing.
             break  # Stop after first matching type.
 
-    return normalize_language_value(detected_language_text), detected_type  # Return parsed canonical values.
+    return normalize_subtitle_language_value(detected_language_text), detected_type  # Return parsed canonical subtitle values.
 
 
 def display_track_name(track_name: str) -> str:

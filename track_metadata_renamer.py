@@ -65,7 +65,7 @@ import os  # Build process-scoped run identifiers when needed.
 import sys  # Return meaningful CLI exit statuses.
 from tqdm import tqdm  # Display rename progress without flooding the terminal.
 
-from audio_language_detector import normalize_language_value  # Reuse canonical language normalization.
+from audio_language_detector import normalize_language_value, normalize_subtitle_language_value  # Reuse canonical audio and subtitle language normalization.
 from Logger import Logger  # Mirror terminal output to a log file.
 from media_integrity_verifier import verify_mkvpropedit_results  # Verify modified media after successful metadata edits.
 from mkvpropedit_wrapper import MkvpropeditResult, TrackMetadataEdit, acquire_media_edit_lock, apply_track_metadata_edits, build_track_selector, release_media_edit_lock, valid_target_name  # Apply mkvpropedit edits.
@@ -1445,7 +1445,7 @@ def read_default_subtitle_config(parser: argparse.ArgumentParser, parsed_args: a
     if not enabled:  # Verify default-subtitle language was omitted.
         return DefaultSubtitleConfig(False, disable_all, disable_forced, "Portuguese", "Full")  # Preserve subtitle defaults except explicit disable modes.
 
-    requested_language = normalize_language_value(parsed_args.default_subtitle_language)  # Normalize requested language through shared aliases.
+    requested_language = normalize_subtitle_language_value(parsed_args.default_subtitle_language)  # Normalize requested subtitle language through subtitle-aware aliases.
     if requested_language == "":  # Verify requested language is supported.
         parser.error(f"Unsupported default subtitle language: {parsed_args.default_subtitle_language}")  # Exit with argument error.
     return DefaultSubtitleConfig(enabled, disable_all, disable_forced, requested_language, "Full")  # Return validated configuration.

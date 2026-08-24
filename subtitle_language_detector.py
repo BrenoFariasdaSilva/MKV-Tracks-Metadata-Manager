@@ -59,7 +59,7 @@ import subprocess  # Extract embedded subtitle tracks with mkvextract.
 import tempfile  # Own temporary extraction directories.
 from typing import Any  # Type dynamic subtitle metadata and detector data.
 
-from audio_language_detector import SAMPLE_FRACTIONS, detect_language_from_metadata, normalize_language_value  # Reuse language normalization.
+from audio_language_detector import SAMPLE_FRACTIONS, detect_language_from_metadata, normalize_subtitle_language_value  # Reuse metadata detection and subtitle-aware language normalization.
 from mkvpropedit_wrapper import find_executable  # Locate MKVToolNix command-line tools.
 
 
@@ -264,7 +264,7 @@ def detect_language_from_text(value: str) -> str:
     best_detection = detections[0]  # Read strongest language candidate.
     if float(best_detection.prob) < MIN_LANGUAGE_PROBABILITY:  # Verify strong confidence.
         return ""  # Return unknown when confidence is weak.
-    return normalize_language_value(str(best_detection.lang))  # Return canonical language name.
+    return normalize_subtitle_language_value(str(best_detection.lang))  # Return canonical subtitle language name.
 
 
 def aggregate_region_languages(region_languages: list[str]) -> str:
