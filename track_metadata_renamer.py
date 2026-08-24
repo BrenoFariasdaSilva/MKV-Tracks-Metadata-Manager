@@ -133,6 +133,40 @@ class DefaultSubtitleConfig:
     subtitle_type: str = "Full"  # Store requested canonical subtitle type.
 
 
+def subtitle_language_matches(requested_language: str, detected_language: str) -> bool:
+    """
+    Verify whether one detected subtitle language satisfies the requested default language.
+
+    A request for generic Portuguese should accept both Portugal Portuguese and
+    Brazilian Portuguese, while a request for Brazilian Portuguese must remain
+    specific so the caller can still target PT-BR explicitly when needed.
+
+    :param requested_language: Requested canonical subtitle language.
+    :param detected_language: Detected canonical subtitle language.
+    :return: True when the detected subtitle language matches the requested target.
+    """
+
+    if requested_language == detected_language:  # Prefer exact canonical matches first.
+        return True  # Return direct match immediately.
+    if requested_language == "Portuguese" and detected_language == "Brazilian Portuguese":  # Treat PT-PT/generic Portuguese requests as satisfied by PT-BR subtitles too.
+        return True  # Return Portuguese-family match.
+    if requested_language == "Brazilian Portuguese" and detected_language == "Portuguese":  # Treat PT-BR requests as satisfied by generic Portuguese metadata when region-specific tagging is unavailable.
+        return True  # Return Portuguese-family fallback match.
+    return False  # Return mismatch for all other language pairs.
+
+
+def same_subtitle_language_family(language_a: str, language_b: str) -> bool:
+    """
+    Verify whether two canonical subtitle languages belong to the same family.
+
+    :param language_a: First canonical subtitle language.
+    :param language_b: Second canonical subtitle language.
+    :return: True when both values refer to the same subtitle language family.
+    """
+
+    return subtitle_language_matches(language_a, language_b) or subtitle_language_matches(language_b, language_a)  # Treat bidirectional Portuguese-family comparisons as equivalent.
+
+
 @dataclass(frozen=True)
 class PlannedRename:
     """
@@ -826,7 +860,7 @@ def plan_selected_default_subtitle_edits(file_path: Path, plans: list[PlannedSub
 
     target_position = matched_plans[0].subtitle_position  # Read unique requested subtitle position.
     operations: list[TrackMetadataEdit] = []  # Store default-flag operations.
-    same_language_positions = {plan.subtitle_position for plan in plans if plan.detected_language == default_subtitle.language}  # Collect same-language subtitle positions.
+    same_language_positions = {plan.subtitle_position for plan in plans if subtitle_language_matches(default_subtitle.language, plan.detected_language)}  # Collect same-language subtitle positions using Portuguese-family matching when requested.
     for current_track in current_tracks:  # Iterate subtitle tracks to enforce requested-language default.
         if current_track.subtitle_position not in same_language_positions:  # Verify track belongs to requested subtitle language.
             continue  # Preserve other-language defaults.
@@ -939,9 +973,10 @@ def collect_matching_default_subtitle_plans(file_path: Path, plans: list[Planned
     :return: Matching subtitle plans.
     """
 
-    matched_plans: list[PlannedSubtitleRename] = []  # Store safely matched requested subtitle plans.
+    exact_type_matches: list[PlannedSubtitleRename] = []  # Store safely matched requested subtitle plans with the exact requested type.
+    untyped_language_matches: list[PlannedSubtitleRename] = []  # Store same-language fallback plans whose subtitle type is unknown.
     for plan in sorted(plans, key=lambda item: item.subtitle_position):  # Iterate plans by subtitle position.
-        if plan.detected_language != default_subtitle.language or plan.detected_type != default_subtitle.subtitle_type:  # Verify plan matches requested language and type.
+        if not subtitle_language_matches(default_subtitle.language, plan.detected_language):  # Verify plan matches requested language family.
             continue  # Skip other subtitle targets.
         if plan.subtitle_position >= len(current_tracks):  # Verify track ordinal still exists.
             summary.failed += 1  # Count stale default-subtitle plan.
@@ -961,9 +996,20 @@ def collect_matching_default_subtitle_plans(file_path: Path, plans: list[Planned
             summary.failed += 1  # Count stale default-subtitle plan.
             summary.messages.append(f"Default subtitle name mismatch in {plan.relative_path} subtitle {plan.subtitle_position + 1}: report={plan.current_name!r}, target={plan.target_name!r}, file={current_track.current_name!r}")  # Store failure reason.
             continue  # Skip stale plan.
-        matched_plans.append(plan)  # Store safely matched requested subtitle plan.
+        if plan.detected_type == default_subtitle.subtitle_type:  # Prefer exact requested subtitle type matches first.
+            exact_type_matches.append(plan)  # Store exact type match.
+            continue  # Stop after recording the strongest match class.
+        if plan.detected_type == "":  # Preserve same-language tracks whose type could not be inferred so they can serve as a fallback.
+            untyped_language_matches.append(plan)  # Store untyped same-language fallback match.
 
-    return matched_plans  # Return matching subtitle plans.
+    if exact_type_matches:  # Prefer exact requested type matches whenever they exist.
+        return exact_type_matches  # Return exact type matches only.
+    if untyped_language_matches:  # Fall back to untyped same-language matches when the report could not classify subtitle type.
+        if len(untyped_language_matches) > 1:  # Keep the fallback deterministic even when multiple same-language tracks remain untyped.
+            summary.messages.append(f"Falling back to first untyped {default_subtitle.language} subtitle in {file_path} because no {default_subtitle.subtitle_type} match was classified in the report.")  # Record deterministic fallback behavior for visibility.
+            return [untyped_language_matches[0]]  # Prefer the first same-language subtitle in MKV order as a deterministic fallback.
+        return untyped_language_matches  # Return the single available untyped fallback match.
+    return []  # Return no matches when neither exact nor fallback subtitle targets exist.
 
 
 def collect_candidate_files(grouped_plans: dict[Path, list[PlannedRename]], grouped_subtitle_plans: dict[Path, list[PlannedSubtitleRename]], input_dir: Path, include_video: bool, selected_file: str | None = None, include_subtitle_defaults: bool = False) -> list[Path]:
