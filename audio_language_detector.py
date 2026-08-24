@@ -71,15 +71,32 @@ MAX_NO_SPEECH_PROBABILITY = 0.65  # Reject samples Whisper marks as mostly non-s
 
 LANGUAGE_ALIASES = {
     "English": ("en", "eng", "english", "ingles", "inglês"),
-    "Portuguese": ("pt", "por", "pob", "portuguese", "portugues", "português", "pt br", "pt-br", "brazilian portuguese", "português brasil", "portugues brasil"),
+    "Brazilian Portuguese": ("pt-br", "pt br", "pob", "brazilian portuguese", "portuguese brazil", "portuguese brasil", "portugues brasil", "português brasil", "ptbr", "pb"),
+    "Portuguese": ("pt", "pt-pt", "pt pt", "por", "portuguese", "portuguese portugal", "european portuguese", "portugues", "português", "portugues portugal", "português portugal"),
+    "Arabic": ("ar", "ara", "arabic", "árabe", "arabe"),
     "Spanish": ("es", "spa", "spanish", "espanol", "español", "castellano", "latam"),
+    "Czech": ("cs", "ces", "cze", "czech", "čeština", "cestina", "checo"),
+    "Danish": ("da", "dan", "danish", "dinamarques", "dinamarquês"),
     "French": ("fr", "fre", "fra", "french", "francais", "français"),
     "German": ("de", "ger", "deu", "german", "deutsch"),
+    "Greek": ("el", "ell", "gre", "greek", "grego", "ελληνικά"),
+    "Finnish": ("fi", "fin", "finnish", "finlandes", "finlandês"),
+    "Hebrew": ("he", "heb", "hebrew", "hebraico", "עברית"),
+    "Hungarian": ("hu", "hun", "hungarian", "hungaro", "húngaro", "magyar"),
+    "Indonesian": ("id", "ind", "indonesian", "indonesio", "indonésio", "bahasa indonesia"),
     "Italian": ("it", "ita", "italian", "italiano"),
     "Japanese": ("ja", "jpn", "japanese", "nihongo"),
     "Korean": ("ko", "kor", "korean"),
     "Chinese": ("zh", "zh-cn", "zh-tw", "zh-hans", "zh-hant", "zho", "chi", "chinese", "mandarin", "cantonese"),
+    "Dutch": ("nl", "nld", "dut", "dutch", "holandes", "holandês", "nederlands"),
+    "Norwegian": ("no", "nor", "nob", "norwegian", "noruegues", "norueguês", "bokmal", "bokmål"),
+    "Polish": ("pl", "pol", "polish", "polones", "polonês"),
+    "Romanian": ("ro", "ron", "rum", "romanian", "romeno", "română", "romana"),
     "Russian": ("ru", "rus", "russian"),
+    "Swedish": ("sv", "swe", "swedish", "sueco"),
+    "Thai": ("th", "tha", "thai", "tailandes", "tailandês"),
+    "Turkish": ("tr", "tur", "turkish", "turco"),
+    "Vietnamese": ("vi", "vie", "vietnamese", "vietnamita", "tiếng việt"),
     "Hindi": ("hi", "hin", "hindi"),
 }  # Store common canonical language aliases.
 
@@ -162,6 +179,27 @@ def normalize_language_value(value: object) -> str:
                 return language_name  # Return canonical language.
 
     return ""  # Return unknown language.
+
+
+def normalize_subtitle_language_value(value: object) -> str:
+    """
+    Resolve one subtitle metadata value into a canonical language name.
+
+    Subtitle metadata often carries region-specific Portuguese labels that are
+    more precise than generic audio language tags, so this helper preserves the
+    shared normalization behavior while preferring PT-BR/PT-PT distinctions when
+    the source metadata explicitly provides them.
+
+    :param value: Raw subtitle metadata value.
+    :return: Canonical subtitle language name or empty text.
+    """
+
+    normalized_value = normalize_text(value)  # Normalize raw value before subtitle-specific checks.
+    if normalized_value in {"pt br", "ptbr", "brazilian portuguese", "portuguese brazil", "portuguese brasil", "portugues brasil", "portugues brasil"}:  # Detect explicit Brazilian Portuguese markers first.
+        return "Brazilian Portuguese"  # Return the canonical Brazilian Portuguese label.
+    if normalized_value in {"pt pt", "ptpt", "portuguese portugal", "european portuguese", "portugues portugal"}:  # Detect explicit Portugal Portuguese markers first.
+        return "Portuguese"  # Return the canonical Portugal/general Portuguese label.
+    return normalize_language_value(value)  # Fall back to shared canonical language normalization for all other cases.
 
 
 def read_string_tags(stream: dict[str, Any]) -> dict[str, str]:
