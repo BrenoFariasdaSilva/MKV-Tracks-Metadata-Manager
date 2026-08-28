@@ -192,6 +192,7 @@ Common CLI path options:
 - `--subtitle-report "Reports/E-Movies-subtitles_report.json"`
 - `--unresolved-audio-report "Reports/E-Movies-audio_unresolved_report.json"`
 - `--file "relative/path/Movie.mkv"`
+- `--skip-verification`
 
 Default audio options:
 
@@ -470,7 +471,7 @@ Same workflow with only `INPUT_DIR` required:
 make process-all-defaults INPUT_DIR="E:/Movies/"
 ```
 
-This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. When default report paths are used, `make process` adds a run identifier so the report stage and rename stage share private process-scoped report files and concurrent process runs do not overwrite each other. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` and selected `flag-forced=0` edits for each MKV in one `mkvpropedit` invocation, then verifies every successfully modified media file with read-only FFmpeg decoding.
+This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. When default report paths are used, `make process` adds a run identifier so the report stage and rename stage share private process-scoped report files and concurrent process runs do not overwrite each other. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` and selected `flag-forced=0` edits for each MKV in one `mkvpropedit` invocation, then verifies every successfully modified media file with read-only FFmpeg decoding unless `--skip-verification` is supplied in `RENAME_ARGS`.
 
 When subtitles are not selected, subtitle reports are not generated, subtitle content is not extracted, and subtitle track names are not changed.
 

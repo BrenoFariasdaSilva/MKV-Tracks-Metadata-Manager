@@ -1227,7 +1227,7 @@ def collect_detected_subtitle_plans_for_file(file_path: Path, input_dir: Path, s
     return subtitle_plans  # Return subtitle plans.
 
 
-def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), default_subtitle: DefaultSubtitleConfig = DefaultSubtitleConfig()) -> RenameSummary:
+def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), default_subtitle: DefaultSubtitleConfig = DefaultSubtitleConfig(), verify_after_edit: bool = True) -> RenameSummary:
     """
     Automatically detect languages and rename video, audio, and subtitle track names.
 
@@ -1238,6 +1238,7 @@ def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bo
     :param selected_file: Optional exact selected file under the input directory.
     :param default_audio: Default-audio configuration.
     :param default_subtitle: Default-subtitle configuration.
+    :param verify_after_edit: Whether successful mkvpropedit changes should be verified with FFmpeg.
     :return: Rename workflow summary.
     """
 
@@ -1250,15 +1251,16 @@ def rename_detected_track_metadata(input_dir: str = INPUT_DIR, include_video: bo
 
     grouped_plans, grouped_subtitle_plans = collect_detected_plans(root_path, summary, include_audio, include_subtitles, selected_file)  # Collect automatic detected plans.
     edit_results = apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file, default_audio, default_subtitle)  # Apply validated rename operations.
-    integrity_summary = verify_mkvpropedit_results(edit_results)  # Verify media integrity after successful metadata edits.
-    summary.failed += integrity_summary.failed  # Propagate integrity failures to workflow exit status.
+    if verify_after_edit:  # Verify post-edit integrity unless explicitly disabled.
+        integrity_summary = verify_mkvpropedit_results(edit_results)  # Verify media integrity after successful metadata edits.
+        summary.failed += integrity_summary.failed  # Propagate integrity failures to workflow exit status.
 
     print_rename_summary(summary)  # Report summary counts plus standalone errors and warnings.
 
     return summary  # Return workflow summary.
 
 
-def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, subtitle_report_path: str | Path | None = None, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: str | Path | None = None, default_subtitle: DefaultSubtitleConfig = DefaultSubtitleConfig(), run_id: str | None = None) -> RenameSummary:
+def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, subtitle_report_path: str | Path | None = None, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: str | Path | None = None, default_subtitle: DefaultSubtitleConfig = DefaultSubtitleConfig(), run_id: str | None = None, verify_after_edit: bool = True) -> RenameSummary:
     """
     Rename deterministic video names plus report-driven audio and subtitle names.
 
@@ -1273,6 +1275,7 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | 
     :param unresolved_audio_report_path: Explicit audio report path for skipped or failed audio occurrences.
     :param default_subtitle: Default-subtitle configuration.
     :param run_id: Optional workflow run identifier.
+    :param verify_after_edit: Whether successful mkvpropedit changes should be verified with FFmpeg.
     :return: Rename workflow summary.
     """
 
@@ -1300,8 +1303,9 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | 
     planned_subtitle_renames = collect_planned_subtitle_renames(subtitle_report_data, root_path, summary) if include_subtitles else []  # Collect selected subtitle rename requests.
     grouped_subtitle_plans = group_subtitle_plans_by_file(planned_subtitle_renames)  # Group subtitle plans by media file.
     edit_results = apply_grouped_renames(grouped_plans, grouped_subtitle_plans, root_path, summary, include_video, selected_file, default_audio, default_subtitle)  # Apply validated rename operations.
-    integrity_summary = verify_mkvpropedit_results(edit_results)  # Verify media integrity after successful metadata edits.
-    summary.failed += integrity_summary.failed  # Propagate integrity failures to workflow exit status.
+    if verify_after_edit:  # Verify post-edit integrity unless explicitly disabled.
+        integrity_summary = verify_mkvpropedit_results(edit_results)  # Verify media integrity after successful metadata edits.
+        summary.failed += integrity_summary.failed  # Propagate integrity failures to workflow exit status.
     if include_audio:  # Verify audio workflow was selected.
         write_unresolved_audio_report(summary, resolved_unresolved_audio_report_path)  # Write editable unresolved audio report.
 
@@ -1310,7 +1314,7 @@ def rename_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | 
     return summary  # Return workflow summary.
 
 
-def process_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, subtitle_report_path: str | Path | None = None, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: str | Path | None = None, default_subtitle: DefaultSubtitleConfig = DefaultSubtitleConfig(), run_id: str | None = None) -> RenameSummary:
+def process_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path | None = None, subtitle_report_path: str | Path | None = None, include_video: bool = True, include_audio: bool = True, include_subtitles: bool = True, selected_file: str | None = None, default_audio: DefaultAudioConfig = DefaultAudioConfig(), unresolved_audio_report_path: str | Path | None = None, default_subtitle: DefaultSubtitleConfig = DefaultSubtitleConfig(), run_id: str | None = None, verify_after_edit: bool = True) -> RenameSummary:
     """
     Generate selected reports and apply selected track-name metadata changes.
 
@@ -1325,6 +1329,7 @@ def process_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path |
     :param unresolved_audio_report_path: Explicit audio report path for skipped or failed audio occurrences.
     :param default_subtitle: Default-subtitle configuration.
     :param run_id: Optional workflow run identifier.
+    :param verify_after_edit: Whether successful mkvpropedit changes should be verified with FFmpeg.
     :return: Rename workflow summary.
     """
 
@@ -1343,7 +1348,7 @@ def process_track_metadata(input_dir: str = INPUT_DIR, report_path: str | Path |
     if include_subtitles:  # Verify subtitle processing was selected.
         generate_subtitle_report(input_dir, subtitle_report_path, selected_file, run_id)  # Generate selected subtitle report.
 
-    return rename_track_metadata(input_dir, report_path, subtitle_report_path, include_video, include_audio, include_subtitles, selected_file, default_audio, unresolved_audio_report_path, default_subtitle, run_id)  # Apply selected metadata changes.
+    return rename_track_metadata(input_dir, report_path, subtitle_report_path, include_video, include_audio, include_subtitles, selected_file, default_audio, unresolved_audio_report_path, default_subtitle, run_id, verify_after_edit)  # Apply selected metadata changes.
 
 
 def add_track_type_arguments(parser: argparse.ArgumentParser, include_video: bool) -> None:
@@ -1442,6 +1447,17 @@ def add_default_subtitle_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--disable-forced-subtitles", action="store_true", help="Set forced subtitle flag-forced=0 only when same-language Full subtitle exists.")  # Add conditional forced-subtitle flag option.
 
 
+def add_verification_arguments(parser: argparse.ArgumentParser) -> None:
+    """
+    Add post-edit verification arguments to a parser.
+
+    :param parser: Argument parser.
+    :return: None.
+    """
+
+    parser.add_argument("--skip-verification", action="store_true", help="Skip post-edit FFmpeg media integrity verification after mkvpropedit changes.")  # Add verification opt-out.
+
+
 def read_default_audio_config(parser: argparse.ArgumentParser, parsed_args: argparse.Namespace, selection: TrackSelection) -> DefaultAudioConfig:
     """
     Read and validate default-audio configuration.
@@ -1501,6 +1517,7 @@ def build_rename_argument_parser() -> argparse.ArgumentParser:
     add_path_arguments(parser)  # Add shared path options.
     add_default_audio_arguments(parser)  # Add optional default-audio flag controls.
     add_default_subtitle_arguments(parser)  # Add optional default-subtitle flag controls.
+    add_verification_arguments(parser)  # Add post-edit verification controls.
     return parser  # Return configured parser.
 
 
@@ -1516,6 +1533,7 @@ def build_process_argument_parser() -> argparse.ArgumentParser:
     add_path_arguments(parser)  # Add shared path options.
     add_default_audio_arguments(parser)  # Add optional default-audio flag controls.
     add_default_subtitle_arguments(parser)  # Add optional default-subtitle flag controls.
+    add_verification_arguments(parser)  # Add post-edit verification controls.
     return parser  # Return configured parser.
 
 
@@ -1537,7 +1555,7 @@ def run_rename_cli(arguments: list[str] | None = None) -> int:
     subtitle_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.subtitle_report, SUBTITLE_REPORT_FILENAME, parsed_args.run_id)  # Resolve default or explicit subtitle report path.
     unresolved_audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.unresolved_audio_report, UNRESOLVED_AUDIO_REPORT_FILENAME, parsed_args.run_id)  # Resolve default or explicit unresolved report path.
     validate_unresolved_report_path(parser, audio_report_path, unresolved_audio_report_path)  # Validate unresolved report output path.
-    summary = rename_track_metadata(parsed_args.input_dir, audio_report_path, subtitle_report_path, selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, unresolved_audio_report_path, default_subtitle, parsed_args.run_id)  # Run selected rename workflow.
+    summary = rename_track_metadata(parsed_args.input_dir, audio_report_path, subtitle_report_path, selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, unresolved_audio_report_path, default_subtitle, parsed_args.run_id, not parsed_args.skip_verification)  # Run selected rename workflow.
     return 1 if summary.failed > 0 else 0  # Return nonzero when workflow failed.
 
 
@@ -1560,7 +1578,7 @@ def run_process_cli(arguments: list[str] | None = None) -> int:
     subtitle_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.subtitle_report, SUBTITLE_REPORT_FILENAME, workflow_run_id)  # Resolve default or explicit subtitle report path.
     unresolved_audio_report_path = resolve_report_path(parsed_args.input_dir, parsed_args.unresolved_audio_report, UNRESOLVED_AUDIO_REPORT_FILENAME, workflow_run_id)  # Resolve default or explicit unresolved report path.
     validate_unresolved_report_path(parser, audio_report_path, unresolved_audio_report_path)  # Validate unresolved report output path.
-    summary = process_track_metadata(parsed_args.input_dir, audio_report_path, subtitle_report_path, selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, unresolved_audio_report_path, default_subtitle, workflow_run_id)  # Run integrated workflow.
+    summary = process_track_metadata(parsed_args.input_dir, audio_report_path, subtitle_report_path, selection.video, selection.audio, selection.subtitles, parsed_args.file, default_audio, unresolved_audio_report_path, default_subtitle, workflow_run_id, not parsed_args.skip_verification)  # Run integrated workflow.
     return 1 if summary.failed > 0 else 0  # Return nonzero when workflow failed.
 
 

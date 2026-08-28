@@ -306,6 +306,21 @@ class ConcurrencyIsolationTests(unittest.TestCase):  # Group concurrency-safety 
         self.assertEqual(report_audio_path, rename_audio_path)  # Verify audio report handoff is exact.
         self.assertEqual(report_subtitle_path, rename_subtitle_path)  # Verify subtitle report handoff is exact.
 
+    def test_skip_verification_cli_flag_is_accepted(self) -> None:  # Verify rename/process CLIs expose the verification opt-out.
+        parsed_rename = track_metadata_renamer.build_rename_argument_parser().parse_args(["--video", "--skip-verification"])  # Parse rename verification opt-out.
+        parsed_process = track_metadata_renamer.build_process_argument_parser().parse_args(["--video", "--skip-verification"])  # Parse process verification opt-out.
+        self.assertTrue(parsed_rename.skip_verification)  # Verify rename parser records the opt-out.
+        self.assertTrue(parsed_process.skip_verification)  # Verify process parser records the opt-out.
+
+    def test_skip_verification_avoids_post_edit_integrity_check(self) -> None:  # Verify workflow can skip FFmpeg post-edit checks.
+        with tempfile.TemporaryDirectory() as temp_dir:  # Create an existing input root.
+            with mock.patch("track_metadata_renamer.apply_grouped_renames", return_value=[]) as apply_mock:  # Avoid real media edits.
+                with mock.patch("track_metadata_renamer.verify_mkvpropedit_results") as verify_mock:  # Observe verification behavior.
+                    summary = track_metadata_renamer.rename_track_metadata(temp_dir, include_video=False, include_audio=False, include_subtitles=False, verify_after_edit=False)  # Run no-op workflow with verification disabled.
+        self.assertEqual(summary.failed, 0)  # Verify disabling verification does not create a failure.
+        self.assertEqual(apply_mock.call_count, 1)  # Verify the rename workflow still runs.
+        self.assertEqual(verify_mock.call_count, 0)  # Verify post-edit verification was skipped.
+
     def test_disable_forced_subtitles_clears_forced_flag(self) -> None:  # Verify forced subtitle cleanup targets flag-forced, not flag-default.
         file_path = Path("Movie.mkv")  # Build display path for planner messages.
         plans = [

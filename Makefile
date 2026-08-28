@@ -118,6 +118,7 @@ help:
 	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio --default-audio-language English\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --default-subtitle-language \"\"Brazilian Portuguese\"\"\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --disable-forced-subtitles\""
+	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --skip-verification\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles --disable-default-subtitles\""
 	@echo "  make process REPORT_ARGS=\"--audio --subtitles\" RENAME_ARGS=\"--video --audio --subtitles\""
 	@echo "  make process REPORT_ARGS=\"--audio\" RENAME_ARGS=\"--video --audio\" INPUT_DIR=\"E:/Movies/Test Folder\""
