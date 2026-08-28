@@ -82,7 +82,7 @@ Supported extensions are:
 .mk3d
 ```
 
-The project modifies only explicitly selected track metadata. The actual file modification is performed by `mkvpropedit`, which edits Matroska metadata in place. The implementation sets one ordinary video track name to the MKV filename stem, applies report-driven audio and embedded-subtitle names, and can optionally set audio/subtitle `flag-default` values. It does not re-encode, remux, remove streams, reorder tracks, change forced flags, change language metadata, alter subtitles, alter chapters, alter attachments, or modify audio/video contents.
+The project modifies only explicitly selected track metadata. The actual file modification is performed by `mkvpropedit`, which edits Matroska metadata in place. The implementation sets one ordinary video track name to the MKV filename stem, applies report-driven audio and embedded-subtitle names, and can optionally set audio/subtitle `flag-default` values plus clear selected `flag-forced` values. It does not re-encode, remux, remove streams, reorder tracks, change language metadata, alter subtitles, alter chapters, alter attachments, or modify audio/video contents.
 
 Language resolution prefers metadata first. Audio fallback extracts short temporary samples from multiple intermediate portions of the specific audio stream, analyzes them with Whisper, aggregates the sample results conservatively, and leaves the language unknown when confidence is insufficient or samples conflict. Embedded text subtitle fallback extracts the specific subtitle track to a temporary file, reads cues from multiple intermediate timeline regions, detects text language with `langdetect`, aggregates conservatively, and leaves the language unknown when evidence is weak or conflicting. Subtitle type is read from the forced flag first and explicit track-name words second. Image-based subtitles use metadata only. Temporary files are created only for analysis and are cleaned up automatically.
 
@@ -394,9 +394,9 @@ If exactly one audio track resolves to the requested language, that track become
 
 ### Default subtitle selection
 
-Default-subtitle selection means setting the Matroska embedded subtitle-track `flag-default` metadata. It is disabled by default and only runs when `--default-subtitle-language`, `--disable-forced-subtitles`, or `--disable-default-subtitles` is supplied.
+Default-subtitle selection means setting the Matroska embedded subtitle-track `flag-default` metadata. It is disabled by default and only runs when `--default-subtitle-language` or `--disable-default-subtitles` is supplied.
 
-The actual Matroska `language` and `forced` fields are not changed. Omitting `--default-subtitle-language` preserves existing subtitle default flags unless `--disable-forced-subtitles` or `--disable-default-subtitles` is supplied.
+The actual Matroska `language` field is not changed. Omitting `--default-subtitle-language` preserves existing subtitle default flags unless `--disable-default-subtitles` is supplied.
 
 Full Portuguese default subtitle:
 
@@ -416,7 +416,7 @@ Disable all default subtitles:
 make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --disable-default-subtitles"
 ```
 
-Disable only forced subtitle defaults when a same-language Full subtitle exists:
+Disable only forced subtitle flags when a same-language Full subtitle exists:
 
 ```powershell
 make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --subtitles --disable-forced-subtitles"
@@ -430,7 +430,7 @@ make process REPORT_ARGS="--audio --subtitles" RENAME_ARGS="--video --audio --su
 
 If exactly one embedded subtitle resolves to `Full Portuguese`, that track becomes default and other Portuguese subtitle tracks are set to `flag-default=0`. A `Forced Portuguese` subtitle is never used as a fallback target for requested `Full Portuguese`. If no requested full subtitle exists, existing subtitle default flags are left unchanged. If multiple requested full subtitle tracks exist, existing subtitle default flags are left unchanged instead of guessing. If the requested subtitle is already the only default subtitle for that language, no default-flag edit is generated.
 
-`--disable-forced-subtitles` clears `flag-default` only on Forced subtitles whose same canonical language also has a Full subtitle. If only `Forced English` exists and no `Full English` exists, that Forced English default state is preserved. `--disable-default-subtitles` remains as a separate explicit stronger option that clears `flag-default=0` on every embedded subtitle track.
+`--disable-forced-subtitles` clears `flag-forced` only on Forced subtitles whose same canonical language also has a Full subtitle. If only `Forced English` exists and no `Full English` exists, that Forced English forced state is preserved. `--disable-default-subtitles` remains as a separate explicit stronger option that clears `flag-default=0` on every embedded subtitle track.
 
 ### Integrated process workflow
 
@@ -470,7 +470,7 @@ Same workflow with only `INPUT_DIR` required:
 make process-all-defaults INPUT_DIR="E:/Movies/"
 ```
 
-This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. When default report paths are used, `make process` adds a run identifier so the report stage and rename stage share private process-scoped report files and concurrent process runs do not overwrite each other. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` edits for each MKV in one `mkvpropedit` invocation, then verifies every successfully modified media file with read-only FFmpeg decoding.
+This runs `report.py` first with `REPORT_ARGS`, waits for successful completion, then runs `track_metadata_renamer.py` with `RENAME_ARGS`. `INPUT_DIR`, `AUDIO_REPORT`, `SUBTITLE_REPORT`, and `FILE` Make variables are passed to both stages. When default report paths are used, `make process` adds a run identifier so the report stage and rename stage share private process-scoped report files and concurrent process runs do not overwrite each other. The rename stage sets ordinary single video track names from filename stems, consumes the selected report data, re-probes current metadata, validates Track UID and MKVToolNix track ID where available, applies selected video/audio/subtitle `name=` edits plus optional audio/subtitle `flag-default=` and selected `flag-forced=0` edits for each MKV in one `mkvpropedit` invocation, then verifies every successfully modified media file with read-only FFmpeg decoding.
 
 When subtitles are not selected, subtitle reports are not generated, subtitle content is not extracted, and subtitle track names are not changed.
 
@@ -562,7 +562,7 @@ Python packages are defined only in [requirements.txt](requirements.txt).
 - [subtitle_tracks_renamer.py](subtitle_tracks_renamer.py): Applies embedded subtitle-track renames from the selected subtitle report only.
 - [audio_language_detector.py](audio_language_detector.py): Resolves language from metadata first, then uses distributed temporary audio samples with Whisper only when needed.
 - [subtitle_language_detector.py](subtitle_language_detector.py): Resolves embedded subtitle language from metadata first, then text subtitle content when available.
-- [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio/subtitle track `name=` metadata and selected audio/subtitle `flag-default=` metadata only.
+- [mkvpropedit_wrapper.py](mkvpropedit_wrapper.py): Builds and executes safe `mkvpropedit` argument lists for video/audio/subtitle track `name=` metadata, selected audio/subtitle `flag-default=` metadata, and selected `flag-forced=0` metadata.
 - [Logger.py](Logger.py): Mirrors executable script terminal output to matching files under `Logs/`.
 - [dependency_lock_runner.py](dependency_lock_runner.py): Serializes shared virtual environment setup from concurrent Makefile runs.
 - [install_windows.bat](install_windows.bat): Windows dependency installer.

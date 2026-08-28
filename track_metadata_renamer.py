@@ -128,7 +128,7 @@ class DefaultSubtitleConfig:
 
     enabled: bool = False  # Store whether subtitle default-flag edits are enabled.
     disable_all: bool = False  # Store whether every subtitle default flag should be cleared.
-    disable_forced: bool = False  # Store whether forced subtitle defaults should be cleared when Full counterpart exists.
+    disable_forced: bool = False  # Store whether forced subtitle flags should be cleared when Full counterpart exists.
     language: str = "Portuguese"  # Store requested canonical subtitle language.
     subtitle_type: str = "Full"  # Store requested canonical subtitle type.
 
@@ -199,7 +199,7 @@ PROGRESS_ONLY_MESSAGE_PREFIXES = (
     "No ",
     "Multiple ",
     "Default ",
-    "Forced subtitle defaults cleared where Full counterpart exists: ",
+    "Forced subtitle flags cleared where Full counterpart exists: ",
 )
 
 
@@ -242,8 +242,8 @@ def build_rename_progress_status(file_path: Path, operations: list[TrackMetadata
         return f"Default flags unchanged: {cyan_name}"  # Return unchanged-default status.
     if any(message.startswith("Multiple ") and "unchanged." in message for message in new_messages):  # Highlight ambiguous requested default targets.
         return f"Default target ambiguous: {cyan_name}"  # Return ambiguous-default status.
-    if any(message.startswith("Forced subtitle defaults cleared where Full counterpart exists: ") for message in new_messages):  # Highlight forced-default cleanup.
-        return f"Forced defaults cleared: {cyan_name}"  # Return forced-default status.
+    if any(message.startswith("Forced subtitle flags cleared where Full counterpart exists: ") for message in new_messages):  # Highlight forced-flag cleanup.
+        return f"Forced flags cleared: {cyan_name}"  # Return forced-flag status.
     if not operations:  # Highlight files that needed no edit after validation.
         return f"No changes needed: {cyan_name}"  # Return no-op status.
     return f"Validated edits: {cyan_name}"  # Return fallback status.
@@ -824,9 +824,9 @@ def plan_default_subtitle_edits(file_path: Path, plans: list[PlannedSubtitleRena
     operations: list[TrackMetadataEdit] = []  # Store combined subtitle default operations.
     if default_subtitle.enabled:  # Verify requested default subtitle should be selected.
         operations.extend(plan_selected_default_subtitle_edits(file_path, plans, current_tracks, summary, default_subtitle))  # Add selected default subtitle operations.
-    if default_subtitle.disable_forced:  # Verify forced subtitle defaults should be cleared conditionally.
+    if default_subtitle.disable_forced:  # Verify forced subtitle flags should be cleared conditionally.
         existing_selectors = {operation.track_selector for operation in operations}  # Store selectors already planned by default selection.
-        operations.extend(plan_disable_forced_subtitle_edits(file_path, plans, current_tracks, summary, existing_selectors))  # Add forced-default clearing operations.
+        operations.extend(plan_disable_forced_subtitle_edits(file_path, plans, current_tracks, summary, existing_selectors))  # Add forced-flag clearing operations.
     return operations  # Return combined subtitle default operations.
 
 
@@ -899,16 +899,16 @@ def plan_disable_default_subtitle_edits(file_path: Path, current_tracks: list[An
     return operations  # Return default-clear operations.
 
 
-def plan_disable_forced_subtitle_edits(file_path: Path, plans: list[PlannedSubtitleRename], current_tracks: list[Any], summary: RenameSummary, existing_selectors: set[str]) -> list[TrackMetadataEdit]:
+def plan_disable_forced_subtitle_edits(file_path: Path, plans: list[PlannedSubtitleRename], current_tracks: list[Any], summary: RenameSummary, _existing_selectors: set[str]) -> list[TrackMetadataEdit]:
     """
-    Plan clearing forced subtitle defaults only when same-language Full exists.
+    Plan clearing forced subtitle flags only when same-language Full exists.
 
     :param file_path: Media file path.
     :param plans: Planned subtitle renames for the file.
     :param current_tracks: Current subtitle tracks.
     :param summary: Mutable workflow summary.
-    :param existing_selectors: Track selectors already planned by other subtitle default operations.
-    :return: mkvpropedit default-flag operations.
+    :param _existing_selectors: Track selectors already planned by other subtitle default operations; duplicate selectors are merged later.
+    :return: mkvpropedit forced-flag operations.
     """
 
     language_types: dict[str, set[str]] = {}  # Store known subtitle types by language.
@@ -917,12 +917,12 @@ def plan_disable_forced_subtitle_edits(file_path: Path, plans: list[PlannedSubti
             continue  # Skip untyped or unknown-language plans.
         language_types.setdefault(plan.detected_language, set()).add(plan.detected_type)  # Store type in language group.
 
-    operations: list[TrackMetadataEdit] = []  # Store forced-default clearing operations.
+    operations: list[TrackMetadataEdit] = []  # Store forced-flag clearing operations.
     for plan in sorted(plans, key=lambda item: item.subtitle_position):  # Iterate subtitle plans by position.
         if plan.detected_type != "Forced":  # Verify this track is a forced subtitle.
             continue  # Skip non-forced subtitles.
         if "Full" not in language_types.get(plan.detected_language, set()):  # Verify same-language Full counterpart exists.
-            continue  # Preserve forced-only language defaults.
+            continue  # Preserve forced-only language flags.
         if plan.subtitle_position >= len(current_tracks):  # Verify track ordinal still exists.
             summary.failed += 1  # Count stale forced-subtitle plan.
             summary.messages.append(f"Forced subtitle track missing in {plan.relative_path}: subtitle {plan.subtitle_position + 1}")  # Store failure reason.
@@ -941,18 +941,16 @@ def plan_disable_forced_subtitle_edits(file_path: Path, plans: list[PlannedSubti
             summary.failed += 1  # Count stale forced-subtitle plan.
             summary.messages.append(f"Forced subtitle name mismatch in {plan.relative_path} subtitle {plan.subtitle_position + 1}: report={plan.current_name!r}, target={plan.target_name!r}, file={current_track.current_name!r}")  # Store failure reason.
             continue  # Skip stale plan.
-        if not current_track.default_track:  # Verify forced subtitle is currently default.
-            continue  # Skip no-op default flag.
+        if not current_track.forced_track:  # Verify forced subtitle currently has its Matroska forced flag set.
+            continue  # Skip no-op forced flag.
 
         track_selector = build_track_selector("s", current_track.subtitle_position, current_track.track_uid)  # Prefer Matroska Track UID selector when available.
-        if track_selector in existing_selectors:  # Verify another selected operation already handles this track.
-            continue  # Avoid duplicate default-flag operation.
-        operations.append(TrackMetadataEdit(track_selector, current_track.current_name, None, False))  # Store forced-default clear operation.
+        operations.append(TrackMetadataEdit(track_selector, current_track.current_name, None, None, False))  # Store forced-flag clear operation.
 
-    if operations:  # Verify any forced defaults need clearing.
-        summary.subtitle_default_planned += len(operations)  # Count planned subtitle default-flag edits.
-        summary.messages.append(f"Forced subtitle defaults cleared where Full counterpart exists: {file_path}")  # Store forced-disable message.
-    return operations  # Return forced-default clearing operations.
+    if operations:  # Verify any forced flags need clearing.
+        summary.subtitle_default_planned += len(operations)  # Count planned subtitle forced-flag edits.
+        summary.messages.append(f"Forced subtitle flags cleared where Full counterpart exists: {file_path}")  # Store forced-disable message.
+    return operations  # Return forced-flag clearing operations.
 
 
 def collect_matching_default_subtitle_plans(file_path: Path, plans: list[PlannedSubtitleRename], current_tracks: list[Any], summary: RenameSummary, default_subtitle: DefaultSubtitleConfig) -> list[PlannedSubtitleRename]:
@@ -1441,7 +1439,7 @@ def add_default_subtitle_arguments(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument("--default-subtitle-language", default=None, help="Set requested Full subtitle language as default; omit to preserve subtitle default flags.")  # Add default subtitle language option.
     parser.add_argument("--disable-default-subtitles", action="store_true", help="Set flag-default=0 on every embedded subtitle track.")  # Add disable-all subtitle default option.
-    parser.add_argument("--disable-forced-subtitles", action="store_true", help="Set forced subtitle flag-default=0 only when same-language Full subtitle exists.")  # Add conditional forced-subtitle default option.
+    parser.add_argument("--disable-forced-subtitles", action="store_true", help="Set forced subtitle flag-forced=0 only when same-language Full subtitle exists.")  # Add conditional forced-subtitle flag option.
 
 
 def read_default_audio_config(parser: argparse.ArgumentParser, parsed_args: argparse.Namespace, selection: TrackSelection) -> DefaultAudioConfig:

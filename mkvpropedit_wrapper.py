@@ -272,8 +272,8 @@ def valid_setter_argument(track_selector: str, setter_value: str) -> bool:
         return True  # Accept track-name setter.
     if setter_value in {"flag-default=0", "flag-default=1"} and (track_selector.startswith("track:a") or track_selector.startswith("track:s") or track_selector.startswith("track:=")):  # Verify audio/subtitle default flag setter.
         return True  # Accept default flag setter.
-    if setter_value in {"flag-forced=0"} and (track_selector.startswith("track:a") or track_selector.startswith("track:=")):  # Verify audio forced-flag clear is permitted.
-        return True  # Accept audio forced-flag clear setter.
+    if setter_value in {"flag-forced=0"} and (track_selector.startswith("track:a") or track_selector.startswith("track:s") or track_selector.startswith("track:=")):  # Verify audio/subtitle forced-flag clear is permitted.
+        return True  # Accept forced-flag clear setter.
     return False  # Reject every other property.
 
 

@@ -9,6 +9,7 @@ import shutil  # Locate make for Makefile expansion tests.
 import subprocess  # Run safe dry-run Makefile commands.
 import sys  # Locate the current Python executable for subprocess tests.
 import tempfile  # Create isolated temporary directories for tests.
+from types import SimpleNamespace  # Build lightweight current-track records.
 import unittest  # Use standard-library automated tests.
 from unittest import mock  # Stub subprocess and executable discovery.
 
@@ -17,6 +18,8 @@ from file_lock import FileLock, release_file_lock  # Test foreign release behavi
 import mkvpropedit_wrapper  # Test media lock behavior.
 from mkvpropedit_wrapper import TrackMetadataEdit  # Build safe edit requests.
 import report  # Test report and log path isolation.
+import track_metadata_renamer  # Test rename planning behavior.
+from track_metadata_renamer import PlannedSubtitleRename, RenameSummary  # Build subtitle rename planner inputs.
 
 
 def run_media_lock_worker(lock_dir_text: str, media_path_text: str, entered_queue: multiprocessing.Queue, release_event: multiprocessing.Event, active_counter: multiprocessing.Value, max_counter: multiprocessing.Value, counter_lock: multiprocessing.Lock) -> None:
@@ -302,6 +305,30 @@ class ConcurrencyIsolationTests(unittest.TestCase):  # Group concurrency-safety 
         rename_subtitle_path = report.resolve_report_path(parsed_rename.input_dir, parsed_rename.subtitle_report, report.SUBTITLE_REPORT_FILENAME, parsed_rename.run_id)  # Resolve consumed subtitle report path.
         self.assertEqual(report_audio_path, rename_audio_path)  # Verify audio report handoff is exact.
         self.assertEqual(report_subtitle_path, rename_subtitle_path)  # Verify subtitle report handoff is exact.
+
+    def test_disable_forced_subtitles_clears_forced_flag(self) -> None:  # Verify forced subtitle cleanup targets flag-forced, not flag-default.
+        file_path = Path("Movie.mkv")  # Build display path for planner messages.
+        plans = [
+            PlannedSubtitleRename(file_path, "Movie.mkv", 0, 4, None, "Full Portuguese", "Full Portuguese", "Portuguese", "Full"),
+            PlannedSubtitleRename(file_path, "Movie.mkv", 1, 5, None, "Forced Portuguese", "Forced Portuguese", "Portuguese", "Forced"),
+        ]  # Build same-language Full and Forced subtitle plans.
+        current_tracks = [
+            SimpleNamespace(subtitle_position=0, stream_index=4, track_uid=None, current_name="Full Portuguese", default_track=True, forced_track=False),
+            SimpleNamespace(subtitle_position=1, stream_index=5, track_uid=None, current_name="Forced Portuguese", default_track=False, forced_track=True),
+        ]  # Build current subtitle state with a forced flag that needs clearing.
+        summary = RenameSummary()  # Collect planner status.
+
+        operations = track_metadata_renamer.plan_disable_forced_subtitle_edits(file_path, plans, current_tracks, summary, {"track:s2"})  # Plan forced-subtitle cleanup with a same-selector default edit already queued.
+
+        self.assertEqual(len(operations), 1)  # Verify exactly the Forced subtitle is targeted.
+        self.assertIsNone(operations[0].default_flag)  # Verify default flags are not changed by this option.
+        self.assertFalse(operations[0].forced_flag)  # Verify the forced flag is explicitly disabled.
+        command = mkvpropedit_wrapper.build_mkvpropedit_arguments(file_path, operations)  # Build the safe mkvpropedit command.
+        self.assertIn("flag-forced=0", command)  # Verify command clears Matroska forced metadata.
+        self.assertTrue(mkvpropedit_wrapper.command_sets_only_permitted_track_metadata(command))  # Verify subtitle forced-flag edits pass wrapper validation.
+        merged_command = mkvpropedit_wrapper.build_mkvpropedit_arguments(file_path, [TrackMetadataEdit("track:s2", "Forced Portuguese", None, False), *operations])  # Build same-selector default plus forced cleanup.
+        self.assertIn("flag-default=0", merged_command)  # Verify combined default-subtitle cleanup remains present.
+        self.assertIn("flag-forced=0", merged_command)  # Verify combined forced-subtitle cleanup remains present.
 
 
 if __name__ == "__main__":  # Run tests when invoked as a script.
